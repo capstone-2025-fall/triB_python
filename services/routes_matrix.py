@@ -64,7 +64,6 @@ class RoutesMatrixService:
                 "origins": origins_data,
                 "destinations": destinations_data,
                 "travelMode": travel_mode,
-                "routingPreference": "TRAFFIC_AWARE_OPTIMAL",
             }
 
             headers = {
@@ -90,20 +89,34 @@ class RoutesMatrixService:
                     )
 
                 result = response.json()
+                logger.info(f"Routes Matrix API response: {result}")
 
             # 응답 파싱
             matrix = np.zeros((len(origins), len(destinations)))
 
             for element in result:
+                # status 확인 - status가 있고 code가 0이 아니면 에러
+                if "status" in element:
+                    status_code = element["status"].get("code")
+                    if status_code is not None and status_code != 0:
+                        logger.warning(
+                            f"Route calculation failed for origin {element.get('originIndex')} "
+                            f"to destination {element.get('destinationIndex')}: "
+                            f"{element['status'].get('message')}"
+                        )
+                        continue
+
                 origin_idx = element.get("originIndex", 0)
                 dest_idx = element.get("destinationIndex", 0)
 
-                # duration은 초 단위 문자열 (예: "300s")
-                duration_str = element.get("duration", "0s")
-                duration_seconds = int(duration_str.rstrip("s"))
-                duration_minutes = duration_seconds / 60.0
+                # duration이 있는 경우만 처리
+                if "duration" in element:
+                    # duration은 초 단위 문자열 (예: "300s")
+                    duration_str = element.get("duration", "0s")
+                    duration_seconds = int(duration_str.rstrip("s"))
+                    duration_minutes = duration_seconds / 60.0
 
-                matrix[origin_idx, dest_idx] = duration_minutes
+                    matrix[origin_idx, dest_idx] = duration_minutes
 
             logger.info(
                 f"Successfully computed route matrix: {len(origins)}x{len(destinations)}"

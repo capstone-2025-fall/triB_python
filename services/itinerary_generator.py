@@ -106,6 +106,9 @@ class ItineraryGeneratorService:
         medoid_ids = list(medoids.values())
         medoid_matrix_json = self._format_matrix_for_prompt(medoid_matrix, medoid_ids)
 
+        logger.info(f"Cluster matrices: {cluster_matrices_json}")
+        logger.info(f"Medoid matrix: {medoid_matrix_json}")
+
         prompt = f"""당신은 여행 일정 최적화 전문가입니다.
 
 주어진 장소들과 사용자 요청을 바탕으로 최적의 여행 일정을 생성해주세요.
