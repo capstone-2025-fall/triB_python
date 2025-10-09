@@ -42,6 +42,7 @@ class ItineraryGeneratorService:
                 "score": round(scores.get(place.id, 0.0), 3),
                 "openingHours": place.opening_hours_desc,
             }
+            logger.info(f"Place {place.display_name} opening_hours_desc: {place.opening_hours_desc}")
             places_data.append(place_info)
 
         return numpy_safe_dumps(places_data, indent=2)
