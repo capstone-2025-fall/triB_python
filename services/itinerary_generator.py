@@ -107,6 +107,9 @@ class ItineraryGeneratorService:
         medoid_ids = list(medoids.values())
         medoid_matrix_json = self._format_matrix_for_prompt(medoid_matrix, medoid_ids)
 
+        logger.info(f"Places: {places_json}")
+        logger.info(f"Clusters: {clusters_json}")
+        logger.info(f"Medoids: {medoids}")
         logger.info(f"Cluster matrices: {cluster_matrices_json}")
         logger.info(f"Medoid matrix: {medoid_matrix_json}")
 
@@ -126,8 +129,18 @@ class ItineraryGeneratorService:
 **2순위: 운영시간 준수**
 - 모든 장소는 반드시 운영시간 내에 방문해야 합니다
 - 이동시간을 고려하여 방문 시간을 정하세요
-- 클러스터 내 이동: cluster_matrices 사용
-- 클러스터 간 이동: medoid_matrix 사용
+
+## 이동시간 계산 방법:
+1. 현재 장소와 다음 장소의 클러스터 ID를 클러스터 정보에서 확인
+2. **같은 클러스터 내 이동** (cluster_id가 동일한 경우):
+   - 클러스터 내 이동시간 매트릭스(cluster_matrices)에서 두 장소 간 이동시간을 조회
+   - 예: place_A와 place_B가 모두 cluster_0에 속하면 cluster_matrices["0"]에서 이동시간 확인
+3. **다른 클러스터 간 이동** (cluster_id가 다른 경우):
+   - 각 클러스터의 메도이드(대표 장소)를 클러스터 정보에서 확인
+   - 메도이드 간 이동시간 매트릭스(medoid_matrix)에서 두 메도이드 간 이동시간을 조회
+   - 이 메도이드 간 이동시간을 두 장소 간 이동시간으로 사용
+   - 예: place_A가 cluster_0(medoid: place_001), place_B가 cluster_1(medoid: place_010)이면
+     medoid_matrix에서 place_001과 place_010 간 이동시간을 사용
 
 **3순위: 맥락적 순서 배치**
 - primaryType을 분석하여 적절한 체류시간과 방문 시간대를 결정하세요
@@ -135,7 +148,7 @@ class ItineraryGeneratorService:
 ### 카테고리별 체류시간 가이드라인:
 
 **Entertainment and Recreation (엔터테인먼트 및 레크리에이션)**
-- 초대형 시설 (240-600분 = 4-10시간): amusement_park, water_park, theme_park
+- 초대형 시설 (300-600분 = 5-10시간): amusement_park, water_park, theme_park
 - 대형 시설 (180-300분 = 3-5시간): aquarium, zoo, wildlife_park, national_park, state_park
 - 중형 시설 (120-180분 = 2-3시간): botanical_garden, planetarium, observation_deck, casino, movie_theater, video_arcade
 - 소형 시설 (60-180분 = 1-3시간): park, garden, plaza, playground, hiking_area, cycling_park
