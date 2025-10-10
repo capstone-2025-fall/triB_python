@@ -21,7 +21,12 @@ class ItineraryRequest(BaseModel):
 
 
 class Visit(BaseModel):
-    place_id: str = Field(..., description="방문 장소 ID")
+    order: int = Field(..., description="일별 방문 순서")
+    google_place_id: str = Field(..., description="Google Place ID")
+    display_name: str = Field(..., description="장소명")
+    place_tag: Optional[str] = Field(default=None, description="장소 태그 (LANDMARK, HOME, RESTAURANT, CAFE, OTHER)")
+    latitude: float = Field(..., description="위도")
+    longitude: float = Field(..., description="경도")
     visit_time: str = Field(..., description="방문 시간 (HH:MM 형식)")
     duration_minutes: int = Field(..., description="체류 시간 (분)")
 
@@ -37,7 +42,7 @@ class ItineraryResponse(BaseModel):
 
 class Place(BaseModel):
     """DB에서 조회한 장소 정보"""
-    id: str
+    google_place_id: str
     display_name: str
     latitude: float
     longitude: float
@@ -47,3 +52,4 @@ class Place(BaseModel):
     price_start: Optional[int] = None
     price_end: Optional[int] = None
     price_currency: Optional[str] = None
+    place_tag: Optional[str] = None

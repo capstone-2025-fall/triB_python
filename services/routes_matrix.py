@@ -145,7 +145,7 @@ class RoutesMatrixService:
         Returns:
             {cluster_id: distance_matrix} 딕셔너리
         """
-        place_dict = {p.id: p for p in places}
+        place_dict = {p.google_place_id: p for p in places}
         cluster_matrices = {}
 
         for cluster_id, place_ids in clusters.items():
@@ -192,7 +192,7 @@ class RoutesMatrixService:
         Returns:
             메도이드 간 이동시간 매트릭스
         """
-        place_dict = {p.id: p for p in places}
+        place_dict = {p.google_place_id: p for p in places}
         medoid_places = [place_dict[medoid_id] for medoid_id in medoids.values()]
 
         if len(medoid_places) == 1:

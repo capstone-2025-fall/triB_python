@@ -33,16 +33,22 @@ class ItineraryGeneratorService:
                 price_range = f"{currency} {place.price_start}+"
 
             place_info = {
-                "id": place.id,
+                "id": place.google_place_id,
                 "name": place.display_name,
                 "lat": place.latitude,
                 "lon": place.longitude,
                 "primaryType": place.primary_type,
+                "placeTag": place.place_tag,
                 "priceRange": price_range,
-                "score": round(scores.get(place.id, 0.0), 3),
+                "score": round(scores.get(place.google_place_id, 0.0), 3),
                 "openingHours": place.opening_hours_desc,
             }
-            logger.info(f"Place {place.display_name} opening_hours_desc: {place.opening_hours_desc}")
+            logger.info(
+                f"Place: {place.display_name} | "
+                f"placeTag={place.place_tag} | "
+                f"primaryType={place.primary_type} | "
+                f"openingHours={place.opening_hours_desc}"
+            )
             places_data.append(place_info)
 
         return numpy_safe_dumps(places_data, indent=2)
@@ -217,14 +223,17 @@ class ItineraryGeneratorService:
 ## 제약사항
 
 - 하루 일정: 10-12시간
-- accommodation이 지정된 경우: 매일 숙소에서 출발하고 숙소로 귀가해야 합니다
+- accommodation이 직접 지정된 경우: 매일 숙소에서 출발하고 숙소로 귀가해야 합니다. accommodation이 null 이면 숙소 방문은 제외합니다.
 - rule 준수: 사용자가 지정한 규칙을 반드시 따르세요
   (예: "11시 기상" → 첫 방문은 11시 이후)
 - must_visit 장소는 반드시 일정에 포함되어야 합니다
+- **중요**: 같은 장소를 여러 번 방문하면 안 됩니다 (각 장소는 최대 1회만 방문)
 
 ## 입력 데이터
 
 ### 장소 리스트
+- primaryType은 적절한 체류시간을 결정하는데 사용됩니다
+- placeTag는 나중에 지도에 표시하기 위해 필요합니다
 ```json
 {places_json}
 ```
@@ -248,6 +257,18 @@ class ItineraryGeneratorService:
 
 **반드시 아래 JSON 형식으로만 반환하세요. 다른 설명이나 텍스트는 포함하지 마세요.**
 
+각 visit 객체는 다음 필드를 포함해야 합니다:
+- order: 일별 방문 순서 (1부터 시작)
+- google_place_id: Google Place ID (위 장소 리스트의 "id" 필드 값)
+- display_name: 장소명 (위 장소 리스트의 "name" 필드 값)
+- place_tag: 장소 태그 (위 장소 리스트의 "placeTag" 필드 값을 **그대로** 사용.)
+- latitude: 위도 (위 장소 리스트의 "lat" 필드 값)
+- longitude: 경도 (위 장소 리스트의 "lon" 필드 값)
+- visit_time: 방문 시간 (HH:MM 형식)
+- duration_minutes: 체류 시간 (분 단위)
+
+**중요**: place_tag는 primaryType이 아닙니다. 반드시 장소 리스트의 "placeTag" 필드 값을 그대로 사용하세요.
+
 ```json
 {{
   "itinerary": [
@@ -255,9 +276,34 @@ class ItineraryGeneratorService:
       "day": 1,
       "visits": [
         {{
-          "place_id": "place_016",
+          "order": 1,
+          "google_place_id": "ChIJAQAAAAAAAA",
+          "display_name": "스타벅스",
+          "place_tag": "CAFE",
+          "latitude": 37.123456,
+          "longitude": 127.123456,
           "visit_time": "09:30",
           "duration_minutes": 90
+        }},
+        {{
+          "order": 2,
+          "google_place_id": "ChIJBBBBBBBBBB",
+          "display_name": "남산타워",
+          "place_tag": "LANDMARK",
+          "latitude": 37.234567,
+          "longitude": 127.234567,
+          "visit_time": "11:30",
+          "duration_minutes": 60
+        }},
+        {{
+          "order": 3,
+          "google_place_id": "ChIJCCCCCCCCCC",
+          "display_name": "일반 공원",
+          "place_tag": null,
+          "latitude": 37.345678,
+          "longitude": 127.345678,
+          "visit_time": "13:30",
+          "duration_minutes": 45
         }}
       ]
     }}

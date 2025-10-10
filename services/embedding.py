@@ -124,7 +124,7 @@ class EmbeddingService:
             for place in places:
                 summary = place.editorial_summary or place.display_name or ""
                 summaries.append(summary)
-                place_ids.append(place.id)
+                place_ids.append(place.google_place_id)
 
             # 임베딩 생성
             logger.info(f"Generating embeddings for {len(summaries)} places")

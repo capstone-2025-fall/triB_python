@@ -50,7 +50,7 @@ class ClusteringService:
         try:
             # 위도/경도 추출
             coords = np.array([[p.latitude, p.longitude] for p in places])
-            place_ids = [p.id for p in places]
+            place_ids = [p.google_place_id for p in places]
 
             # 중심점 계산
             center_lat = np.mean(coords[:, 0])
@@ -103,7 +103,7 @@ class ClusteringService:
             메도이드 장소의 ID
         """
         if len(places) == 1:
-            return places[0].id
+            return places[0].google_place_id
 
         try:
             # 각 장소에 대해 다른 모든 장소와의 평균 거리 계산
@@ -116,7 +116,7 @@ class ClusteringService:
 
             # 평균 거리가 최소인 장소의 인덱스
             medoid_idx = np.argmin(avg_distances)
-            medoid_place_id = places[medoid_idx].id
+            medoid_place_id = places[medoid_idx].google_place_id
 
             logger.info(f"Found medoid: {medoid_place_id} with avg distance {avg_distances[medoid_idx]:.2f} min")
 
@@ -125,7 +125,7 @@ class ClusteringService:
         except Exception as e:
             logger.error(f"Failed to find medoid: {str(e)}")
             # 에러 발생 시 첫 번째 장소 반환
-            return places[0].id
+            return places[0].google_place_id
 
     def find_cluster_medoids(
         self,
@@ -144,7 +144,7 @@ class ClusteringService:
         Returns:
             {cluster_id: medoid_place_id} 딕셔너리
         """
-        place_dict = {p.id: p for p in places}
+        place_dict = {p.google_place_id: p for p in places}
         medoids = {}
 
         for cluster_id, place_ids in clusters.items():
