@@ -17,6 +17,56 @@ class ItineraryGeneratorService:
     def __init__(self):
         self.model = genai.GenerativeModel("gemini-2.5-flash")
 
+    def _parse_opening_hours_desc(self, opening_hours_desc: str) -> Dict[str, str]:
+        """
+        opening_hours_desc 문자열을 요일별로 파싱
+
+        Args:
+            opening_hours_desc: weekdayDescriptions 문자열
+                예: "Monday: 9:00 AM – 5:00 PM, Tuesday: Closed, ..."
+                또는 "월요일: 오전 9:00 – 오후 5:00, 화요일: 휴무, ..."
+
+        Returns:
+            요일별 운영시간 딕셔너리 (영어 요일명으로 통일)
+        """
+        if not opening_hours_desc:
+            return {}
+
+        # 한글 요일 -> 영어 요일 매핑
+        korean_to_english = {
+            "월요일": "Monday",
+            "화요일": "Tuesday",
+            "수요일": "Wednesday",
+            "목요일": "Thursday",
+            "금요일": "Friday",
+            "토요일": "Saturday",
+            "일요일": "Sunday"
+        }
+
+        hours_by_day = {}
+
+        # 줄바꿈 또는 쉼표로 구분된 요일별 정보 분리
+        lines = opening_hours_desc.replace(", ", "\n").split("\n")
+
+        for line in lines:
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+
+            # "Monday: 9:00 AM – 5:00 PM" 또는 "월요일: 오전 9:00 – 오후 5:00" 형식 파싱
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                day = parts[0].strip()
+                hours = parts[1].strip()
+
+                # 한글 요일이면 영어로 변환
+                if day in korean_to_english:
+                    day = korean_to_english[day]
+
+                hours_by_day[day] = hours
+
+        return hours_by_day
+
     def _format_places_for_prompt(
         self, places: List[Place], scores: Dict[str, float]
     ) -> str:
@@ -32,6 +82,13 @@ class ItineraryGeneratorService:
                 currency = place.price_currency or "KRW"
                 price_range = f"{currency} {place.price_start}+"
 
+            # Parse opening hours description into weekday format
+            opening_hours_by_day = None
+            if place.opening_hours_desc:
+                opening_hours_by_day = self._parse_opening_hours_desc(
+                    place.opening_hours_desc
+                )
+
             place_info = {
                 "id": place.google_place_id,
                 "name": place.display_name,
@@ -41,7 +98,7 @@ class ItineraryGeneratorService:
                 "placeTag": place.place_tag,
                 "priceRange": price_range,
                 "score": round(scores.get(place.google_place_id, 0.0), 3),
-                "openingHours": place.opening_hours_desc,
+                "openingHoursByDay": opening_hours_by_day,
             }
             logger.info(
                 f"Place: {place.display_name} | "
@@ -119,6 +176,20 @@ class ItineraryGeneratorService:
         logger.info(f"Cluster matrices: {cluster_matrices_json}")
         logger.info(f"Medoid matrix: {medoid_matrix_json}")
 
+        # Calculate weekday for each day
+        start_date = user_request.start_date
+        day_weekdays = {}
+        for day_num in range(1, user_request.days + 1):
+            from datetime import timedelta
+            current_date = start_date + timedelta(days=day_num - 1)
+            # Python weekday: 0=Monday, 6=Sunday -> Google API: 0=Sunday, 6=Saturday
+            google_weekday = (current_date.weekday() + 1) % 7
+            day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+            day_weekdays[day_num] = {
+                "date": current_date.strftime("%Y-%m-%d"),
+                "weekday": day_names[google_weekday]
+            }
+
         prompt = f"""당신은 여행 일정 최적화 전문가입니다.
 
 주어진 장소들과 사용자 요청을 바탕으로 최적의 여행 일정을 생성해주세요.
@@ -130,11 +201,18 @@ class ItineraryGeneratorService:
 - rule: {user_request.rule or "없음"}
 - must_visit: {user_request.preferences.must_visit or "없음"}
 - accommodation: {user_request.preferences.accommodation or "없음"}
+- 여행 시작일: {start_date.strftime("%Y-%m-%d")}
 - 여행 일수: {user_request.days}일
 
-**2순위: 운영시간 준수**
-- 모든 장소는 반드시 운영시간 내에 방문해야 합니다
-- 이동시간을 고려하여 방문 시간을 정하세요
+**여행 일정별 날짜 및 요일:**
+{numpy_safe_dumps(day_weekdays, indent=2)}
+
+**2순위: 운영시간 준수 (매우 중요!)**
+- 모든 장소는 반드시 해당 요일의 운영시간 내에 방문해야 합니다
+- 각 장소의 "openingHoursByDay" 필드에서 해당 요일(weekday)의 운영시간을 확인하세요
+- 예: Day 1이 Monday라면, 각 장소의 openingHoursByDay에서 "Monday"의 시간을 확인
+- 운영시간이 없는 요일에는 해당 장소를 방문할 수 없습니다
+- 이동시간을 고려하여 방문 종료 시간이 운영 종료 시간을 넘지 않도록 하세요
 
 ## 이동시간 계산 방법:
 1. 현재 장소와 다음 장소의 클러스터 ID를 클러스터 정보에서 확인
@@ -154,7 +232,7 @@ class ItineraryGeneratorService:
 ### 카테고리별 체류시간 가이드라인:
 
 **Entertainment and Recreation (엔터테인먼트 및 레크리에이션)**
-- 초대형 시설 (300-600분 = 5-10시간): amusement_park, water_park, theme_park
+- 초대형 시설 (300-600분 = 5-10시간): amusement_park, water_park, theme_park ** 놀이공원은 최소 300분 이상 방문해야 합니다 **
 - 대형 시설 (180-300분 = 3-5시간): aquarium, zoo, wildlife_park, national_park, state_park
 - 중형 시설 (120-180분 = 2-3시간): botanical_garden, planetarium, observation_deck, casino, movie_theater, video_arcade
 - 소형 시설 (60-180분 = 1-3시간): park, garden, plaza, playground, hiking_area, cycling_park

@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
+from datetime import date
 
 
 class Preferences(BaseModel):
@@ -12,6 +13,7 @@ class UserRequest(BaseModel):
     query: str = Field(..., description="사용자 여행 취향 쿼리")
     rule: Optional[List[str]] = Field(default=None, description="사용자 규칙 (예: '11시 기상')")
     days: int = Field(..., ge=1, description="여행 일수")
+    start_date: date = Field(..., description="여행 시작 날짜 (YYYY-MM-DD)")
     preferences: Preferences
 
 

@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Tuple
 import numpy as np
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, KMeans
 from config import settings
 from models.schemas import Place
 
@@ -12,6 +12,7 @@ class ClusteringService:
     def __init__(self):
         self.eps_km = settings.dbscan_eps_km
         self.min_samples = settings.dbscan_min_samples
+        self.max_cluster_size = 10  # Routes Matrix API 제한
 
     def lat_lon_to_km(self, lat: float, lon: float, center_lat: float, center_lon: float) -> Tuple[float, float]:
         """
@@ -84,11 +85,94 @@ class ClusteringService:
             for cluster_id, place_ids_in_cluster in clusters.items():
                 logger.info(f"Cluster {cluster_id}: {len(place_ids_in_cluster)} places")
 
+            # 10개 초과 클러스터를 서브클러스터로 분할
+            clusters = self._split_large_clusters(clusters, places)
+
             return clusters
 
         except Exception as e:
             logger.error(f"Failed to cluster places: {str(e)}")
             raise
+
+    def _split_large_clusters(
+        self, clusters: Dict[int, List[str]], places: List[Place]
+    ) -> Dict[int, List[str]]:
+        """
+        10개 초과 클러스터를 서브클러스터로 분할
+
+        Args:
+            clusters: 원본 클러스터
+            places: 전체 장소 리스트
+
+        Returns:
+            분할된 클러스터 (10개 이하 보장)
+        """
+        place_dict = {p.google_place_id: p for p in places}
+        new_clusters = {}
+        new_cluster_id = 0
+
+        for cluster_id, place_ids in clusters.items():
+            if len(place_ids) <= self.max_cluster_size:
+                # 10개 이하는 그대로 유지
+                new_clusters[new_cluster_id] = place_ids
+                new_cluster_id += 1
+            else:
+                # 10개 초과는 재귀적으로 분할
+                logger.info(
+                    f"Splitting cluster {cluster_id} with {len(place_ids)} places"
+                )
+                cluster_places = [place_dict[pid] for pid in place_ids]
+                sub_clusters = self._split_cluster_recursive(cluster_places)
+
+                for sub_cluster_places in sub_clusters:
+                    sub_cluster_ids = [p.google_place_id for p in sub_cluster_places]
+                    new_clusters[new_cluster_id] = sub_cluster_ids
+                    logger.info(
+                        f"  Created sub-cluster {new_cluster_id} with {len(sub_cluster_ids)} places"
+                    )
+                    new_cluster_id += 1
+
+        return new_clusters
+
+    def _split_cluster_recursive(self, places: List[Place]) -> List[List[Place]]:
+        """
+        클러스터를 재귀적으로 분할하여 각 서브클러스터가 ≤10개가 되도록 함
+
+        Args:
+            places: 분할할 장소 리스트
+
+        Returns:
+            서브클러스터 리스트
+        """
+        if len(places) <= self.max_cluster_size:
+            return [places]
+
+        # K-means로 2개로 분할
+        coords = np.array([[p.latitude, p.longitude] for p in places])
+
+        # 중심점 계산
+        center_lat = np.mean(coords[:, 0])
+        center_lon = np.mean(coords[:, 1])
+
+        # km 단위로 변환
+        coords_km = np.array(
+            [self.lat_lon_to_km(lat, lon, center_lat, center_lon) for lat, lon in coords]
+        )
+
+        # K-means로 2개 클러스터로 분할
+        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(coords_km)
+
+        # 두 그룹으로 분리
+        group_0 = [places[i] for i in range(len(places)) if labels[i] == 0]
+        group_1 = [places[i] for i in range(len(places)) if labels[i] == 1]
+
+        # 각 그룹을 재귀적으로 분할
+        result = []
+        result.extend(self._split_cluster_recursive(group_0))
+        result.extend(self._split_cluster_recursive(group_1))
+
+        return result
 
     def find_medoid(self, places: List[Place], distance_matrix: np.ndarray) -> str:
         """

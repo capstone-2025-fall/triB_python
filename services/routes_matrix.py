@@ -137,8 +137,11 @@ class RoutesMatrixService:
         """
         각 클러스터 내의 이동시간 매트릭스 계산
 
+        Note: 클러스터링 서비스에서 이미 모든 클러스터를 ≤10개로 분할하므로
+        배치 처리 없이 직접 API 호출
+
         Args:
-            clusters: {cluster_id: [place_ids]} 딕셔너리
+            clusters: {cluster_id: [place_ids]} 딕셔너리 (각 클러스터 ≤10개)
             places: 전체 장소 리스트
             travel_mode: 이동 수단
 
@@ -155,6 +158,13 @@ class RoutesMatrixService:
                 continue
 
             cluster_places = [place_dict[pid] for pid in place_ids]
+
+            # 모든 클러스터가 ≤10개이므로 직접 API 호출
+            if len(cluster_places) > 10:
+                logger.warning(
+                    f"Cluster {cluster_id} has {len(cluster_places)} places (>10), "
+                    f"this should not happen after cluster splitting!"
+                )
 
             try:
                 matrix = await self.compute_route_matrix(
