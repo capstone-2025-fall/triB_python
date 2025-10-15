@@ -276,7 +276,7 @@ class ItineraryGeneratorService:
 - 일반 서비스 (30-90분): 목적에 따라 다름
 
 **Transportation (교통)**
-- 환승/대기 (15-45분): airport, train_station, bus_station, subway_station 등
+- 환승/대기 (0-30분): airport, train_station, bus_station, subway_station 등
 
 **Natural Features (자연)**
 - 해변 (120-240분 = 2-4시간, 낮 시간대): beach
