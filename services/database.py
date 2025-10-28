@@ -58,10 +58,10 @@ class DatabaseService:
                         mpd.editorial_summary,
                         mpd.price_start,
                         mpd.price_end,
-                        mpd.price_currency,
-                        mp.place_tag
+                        mpd.price_currency
+                        -- mp.place_tag
                     FROM message_place_details mpd
-                    LEFT JOIN message_places mp ON mpd.message_place_id = mp.message_place_id
+                    -- LEFT JOIN message_places mp ON mpd.message_place_id = mp.message_place_id
                     WHERE mpd.google_place_id IN ({placeholders})
                 """
 
@@ -74,7 +74,8 @@ class DatabaseService:
 
                 places = []
                 for row in results:
-                    place_tag = row.get("place_tag")
+                    # place_tag = row.get("place_tag")  # message_places 테이블이 없어서 주석처리
+                    place_tag = "LANDMARK"  # 테스트용 임시 값
                     logger.debug(
                         f"Place {row['display_name']} (ID: {row['google_place_id']}): "
                         f"place_tag={place_tag}, "

@@ -69,8 +69,15 @@ class RoutesMatrixService:
             headers = {
                 "Content-Type": "application/json",
                 "X-Goog-Api-Key": self.api_key,
-                "X-Goog-FieldMask": "originIndex,destinationIndex,duration,distanceMeters,status",
+                "X-Goog-FieldMask": "originIndex,destinationIndex,status,condition,distanceMeters,duration",
             }
+
+            logger.info(
+                f"Requesting route matrix: {len(origins)}x{len(destinations)}, "
+                f"travelMode={travel_mode}"
+            )
+            logger.debug(f"Request body: {request_body}")
+            logger.debug(f"Headers: {headers}")
 
             # API 호출
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -89,25 +96,43 @@ class RoutesMatrixService:
                     )
 
                 result = response.json()
-                logger.info(f"Routes Matrix API response: {result}")
+
+                # 첫 번째 응답 요소를 상세히 로깅
+                if result:
+                    logger.info(f"Sample response element: {result[0]}")
+                    logger.info(f"Total response elements: {len(result)}")
+                else:
+                    logger.warning("API returned empty result!")
+
+                logger.debug(f"Full Routes Matrix API response: {result}")
 
             # 응답 파싱
             matrix = np.zeros((len(origins), len(destinations)))
 
+            # 디버깅: duration이 없는 경우 카운트
+            missing_duration_count = 0
+
             for element in result:
+                origin_idx = element.get("originIndex", 0)
+                dest_idx = element.get("destinationIndex", 0)
+
                 # status 확인 - status가 있고 code가 0이 아니면 에러
                 if "status" in element:
                     status_code = element["status"].get("code")
                     if status_code is not None and status_code != 0:
                         logger.warning(
-                            f"Route calculation failed for origin {element.get('originIndex')} "
-                            f"to destination {element.get('destinationIndex')}: "
-                            f"{element['status'].get('message')}"
+                            f"Route calculation failed for origin {origin_idx} "
+                            f"to destination {dest_idx}: "
+                            f"status={element['status'].get('message')}"
                         )
                         continue
 
-                origin_idx = element.get("originIndex", 0)
-                dest_idx = element.get("destinationIndex", 0)
+                # condition 확인 (ROUTE_NOT_FOUND, ROUTE_EXISTS 등)
+                condition = element.get("condition")
+                if condition and condition != "ROUTE_EXISTS":
+                    logger.warning(
+                        f"Route condition for origin {origin_idx} to destination {dest_idx}: {condition}"
+                    )
 
                 # duration이 있는 경우만 처리
                 if "duration" in element:
@@ -117,6 +142,18 @@ class RoutesMatrixService:
                     duration_minutes = duration_seconds / 60.0
 
                     matrix[origin_idx, dest_idx] = duration_minutes
+                else:
+                    missing_duration_count += 1
+                    logger.warning(
+                        f"Missing duration for origin {origin_idx} to destination {dest_idx}. "
+                        f"Element: {element}"
+                    )
+
+            if missing_duration_count > 0:
+                logger.warning(
+                    f"⚠️ {missing_duration_count}/{len(result)} routes have NO duration data! "
+                    f"Matrix will have {missing_duration_count} zero values."
+                )
 
             logger.info(
                 f"Successfully computed route matrix: {len(origins)}x{len(destinations)}"

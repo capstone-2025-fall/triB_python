@@ -345,6 +345,7 @@ class ItineraryGeneratorService:
 - visit_time: 방문 시간 (HH:MM 형식)
 - duration_minutes: 체류 시간 (분 단위)
 
+**중요**: accommodation이 지정된 경우: 매일 숙소에서 출발하고 숙소로 귀가해야 합니다. 숙소를 포함한 일정을 반환하도록 합니다.
 **중요**: place_tag는 primaryType이 아닙니다. 반드시 장소 리스트의 "placeTag" 필드 값을 그대로 사용하세요.
 
 ```json
