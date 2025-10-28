@@ -26,3 +26,77 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/")
+async def root():
+    """
+    Health check 엔드포인트
+
+    Returns:
+        API 상태 정보
+    """
+    return {
+        "status": "ok",
+        "message": "triB V2 API is running",
+        "version": "2.0.0"
+    }
+
+
+@app.post("/api/v2/itinerary/generate", response_model=ItineraryResponse2)
+async def generate_itinerary_v2(request: ItineraryRequest2):
+    """
+    V2 여행 일정 생성 엔드포인트
+
+    Args:
+        request: 장소 이름 리스트 및 사용자 요청 (채팅 내용 포함)
+
+    Returns:
+        생성된 여행 일정
+
+    Raises:
+        HTTPException: 일정 생성 실패 시
+
+    Note:
+        V1과 달리 DB 조회, 임베딩, 클러스터링, 이동시간 계산 없이
+        Gemini가 모든 작업을 수행합니다.
+    """
+    try:
+        # 요청 정보 로깅
+        logger.info(
+            f"V2 itinerary generation request: "
+            f"{len(request.places)} places, {request.user_request.days} days"
+        )
+        logger.info(f"Chat messages: {len(request.user_request.chat)}")
+        logger.debug(f"Places: {request.places}")
+
+        # Gemini로 일정 생성 (단순!)
+        itinerary = await itinerary_generator_service2.generate_itinerary(
+            request.places,
+            request.user_request,
+        )
+
+        # 성공 로깅
+        logger.info(
+            f"Successfully generated V2 itinerary: "
+            f"{len(itinerary.itinerary)} days"
+        )
+
+        return itinerary
+
+    except HTTPException:
+        # HTTPException은 그대로 전파
+        raise
+    except Exception as e:
+        # 일반 예외는 로깅 후 500 에러로 변환
+        logger.error(f"V2 itinerary generation failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    logger.info("Starting triB V2 API server on port 8001...")
+    uvicorn.run("main2:app", host="0.0.0.0", port=8001, reload=True)
