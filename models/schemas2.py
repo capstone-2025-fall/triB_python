@@ -48,3 +48,51 @@ class ItineraryRequest2(BaseModel):
         description="장소 이름 리스트 (Google Place ID 아님!)"
     )
     user_request: UserRequest2
+
+
+class Visit2(BaseModel):
+    """V2 방문 장소 정보"""
+    order: int = Field(
+        ...,
+        description="방문 순서"
+    )
+    display_name: str = Field(
+        ...,
+        description="장소명"
+    )
+    latitude: float = Field(
+        ...,
+        description="위도"
+    )
+    longitude: float = Field(
+        ...,
+        description="경도"
+    )
+    visit_time: str = Field(
+        ...,
+        description="방문 시간 (HH:MM 형식)"
+    )
+    travel_time: int = Field(
+        ...,
+        description="다음 장소로의 이동시간 (분), 마지막 방문지는 0"
+    )
+
+
+class DayItinerary2(BaseModel):
+    """V2 일별 일정"""
+    day: int = Field(
+        ...,
+        description="일차"
+    )
+    visits: List[Visit2] = Field(
+        ...,
+        description="해당 일의 방문 장소 리스트"
+    )
+
+
+class ItineraryResponse2(BaseModel):
+    """V2 일정 생성 응답"""
+    itinerary: List[DayItinerary2] = Field(
+        ...,
+        description="전체 일정"
+    )
