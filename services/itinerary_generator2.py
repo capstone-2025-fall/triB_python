@@ -212,12 +212,71 @@ class ItineraryGeneratorService2:
         Returns:
             ItineraryResponse2: 생성된 여행 일정
 
+        Raises:
+            Exception: Gemini API 호출 실패 또는 JSON 파싱 실패 시
+
         Note:
             V1과 달리 DB 조회, 클러스터링, 이동시간 매트릭스 계산 없음
             모든 로직을 Gemini에게 위임
         """
-        # 구현 예정
-        pass
+        try:
+            # 프롬프트 생성
+            prompt = self._create_prompt_v2(places, user_request)
+
+            logger.info(
+                f"Generating V2 itinerary: {len(places)} places, "
+                f"{user_request.days} days, {len(user_request.chat)} chat messages"
+            )
+            logger.debug(f"Prompt length: {len(prompt)} characters")
+
+            # Gemini API 호출
+            logger.info("Calling Gemini API...")
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.7,
+                    response_mime_type="application/json",
+                ),
+            )
+
+            # 응답 텍스트 추출
+            response_text = response.text
+            logger.info(f"Received response: {len(response_text)} characters")
+            logger.debug(f"Response preview: {response_text[:200]}...")
+
+            # JSON 파싱
+            try:
+                itinerary_data = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error: {str(e)}")
+                logger.error(f"Response text: {response_text}")
+                raise Exception(f"Gemini returned invalid JSON: {str(e)}")
+
+            # Pydantic 검증
+            try:
+                itinerary_response = ItineraryResponse2(**itinerary_data)
+            except Exception as e:
+                logger.error(f"Pydantic validation error: {str(e)}")
+                logger.error(f"Data: {json.dumps(itinerary_data, indent=2, ensure_ascii=False)}")
+                raise Exception(f"Invalid itinerary format: {str(e)}")
+
+            # 성공 로그
+            total_visits = sum(len(day.visits) for day in itinerary_response.itinerary)
+            logger.info(
+                f"Successfully generated V2 itinerary: "
+                f"{len(itinerary_response.itinerary)} days, {total_visits} total visits"
+            )
+
+            # 각 일차별 요약 로그
+            for day in itinerary_response.itinerary:
+                visit_names = [v.display_name for v in day.visits]
+                logger.info(f"  Day {day.day}: {len(day.visits)} visits - {', '.join(visit_names)}")
+
+            return itinerary_response
+
+        except Exception as e:
+            logger.error(f"V2 itinerary generation failed: {str(e)}", exc_info=True)
+            raise
 
 
 # 싱글톤 인스턴스
