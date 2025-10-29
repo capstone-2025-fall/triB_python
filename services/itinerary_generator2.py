@@ -17,8 +17,8 @@ class ItineraryGeneratorService2:
 
     def __init__(self):
         """Gemini 모델 초기화"""
-        self.model = genai.GenerativeModel("gemini-2.5-flash")
-        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-flash")
+        self.model = genai.GenerativeModel("gemini-2.5-pro")
+        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-pro")
 
     def _create_prompt_v2(
         self,
@@ -111,14 +111,27 @@ class ItineraryGeneratorService2:
 - **필수 방문 장소 (must_visit)는 반드시 일정에 포함하세요**
 - 장소의 특성, 소요시간, 지리적 위치를 고려하여 합리적으로 배치하세요
 
-### 3. 숙소 추천
+### 3. 숙소 추천 및 관리
 - accommodation이 "없음 (추천 필요)"로 표시되어 있다면:
-  - 여행지와 예산에 맞는 적절한 숙소를 추천하세요
-  - 위치, 가격대, 편의성, 접근성을 고려하세요
-  - 숙소는 매일 일정의 마지막 visit으로 포함하세요
-- accommodation이 제공되어 있다면 해당 숙소를 사용하세요
+  - **사용자 대화(chat)에서 숙소 관련 선호사항을 우선 반영하세요** (예: "깨끗한 호텔", "게스트하우스", "역 근처")
+  - 선호사항 중에서 위치, 접근성, 가격대, 편의성을 종합적으로 고려하여 추천하세요
+  - 관광지들의 중심에 위치하거나 대중교통 접근이 좋은 숙소를 선택하세요
+- accommodation이 제공되어 있다면 해당 숙소를 사용하고, Gemini가 정확한 좌표를 추론하세요
 
-### 4. 이동시간 계산
+### 4. 숙소 왕복 일정 구성
+- **기본 원칙**: 일반적인 상황에서 하루 일정의 시작과 끝은 숙소여야 합니다
+  - 구조: **숙소 (출발) → 관광지1 → 관광지2 → ... → 숙소 (귀환)**
+  - 첫 visit은 숙소 출발, 마지막 visit은 숙소 귀환으로 설정하세요
+  - 숙소 출발 시 visit_time은 첫 관광지 방문에 적절한 시간으로 설정 (예: 첫 관광지가 10시 개장이면 09:30 출발)
+  - 숙소 귀환 시 visit_time은 마지막 관광지 방문 후 이동시간을 고려하여 설정
+- **하루 일정 길이**: 일반적으로 10-12시간 정도가 적절합니다
+- **예외 처리** (우선순위가 높음):
+  - 사용자 대화나 규칙(rule)에 숙소 왕복과 다른 패턴이 명시되어 있으면 그것을 따르세요
+  - 예: "마지막날 공항으로 이동" → 마지막날은 "숙소 → 관광지 → 공항"으로 구성
+  - 예: "첫날 공항에서 출발" → 첫날은 "공항 → 관광지 → 숙소"로 구성
+  - 규칙이 숙소 왕복과 충돌하면 **규칙을 우선**하되, 가능한 경우 숙소 왕복을 유지하세요
+
+### 5. 이동시간 계산
 - 각 visit의 `travel_time`은 **현재 장소에서 다음 장소로 가는 이동시간(분)**입니다
 - **마지막 visit의 travel_time은 반드시 0으로 설정하세요**
 - 이동 수단 "{user_request.preferences.travel_mode}" 기준으로 이동시간을 추론하세요:
@@ -128,20 +141,20 @@ class ItineraryGeneratorService2:
   - **BICYCLE**: 자전거 (평균 15km/h)
 - 지리적 거리와 도로 상황을 고려하여 현실적인 이동시간을 계산하세요
 
-### 5. 규칙 준수
+### 6. 규칙 준수 (최우선)
 - **"반드시 지켜야 할 규칙 (rule)"의 모든 항목을 일정에 반영하세요**
+- **우선순위**: 규칙(rule) > 숙소 왕복 > 기본 패턴
 - 예시:
-  - "첫날은 도착하니까 오사카성 정도만 가자. 무리 ㄴㄴ" → Day 1에는 오사카성과 숙소만 포함
-  - "둘째날은 유니버설 하루 종일이지?" → Day 2는 유니버설 스튜디오만 포함
+  - "둘째날은 유니버설 하루 종일이지?" → Day 2는 유니버설 스튜디오만 포함 (숙소 왕복 제외 가능)
   - "11시 기상" → 첫 방문 시간을 11시 이후로 설정
+  - "마지막날 공항으로" → 마지막날은 숙소 대신 공항으로 종료
 - 규칙이 충돌하면 사용자의 안전과 편의를 최우선으로 고려하세요
 
-### 6. 운영시간 고려
-- 각 장소의 일반적인 운영시간을 고려하여 방문 시간을 설정하세요
-- 예: 미술관/박물관은 보통 10:00-18:00, 식당은 11:30-14:00 (점심), 17:30-22:00 (저녁)
+### 7. 운영시간 고려
+- 각 장소의 운영시간을 고려하여 방문 시간을 설정하세요
 - 관광지는 개장 시간 내에 방문하도록 일정을 조정하세요
 
-### 7. 체류시간 고려
+### 8. 체류시간 고려
 - 각 장소별 적절한 체류시간을 고려하세요:
   - 대형 테마파크 (유니버설 스튜디오 등): 6-10시간
   - 주요 관광지 (성, 사원 등): 1.5-3시간
@@ -162,7 +175,7 @@ class ItineraryGeneratorService2:
       "visits": [
         {{
           "order": 1,
-          "display_name": "장소명",
+          "display_name": "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본",
           "latitude": 위도 (float),
           "longitude": 경도 (float),
           "visit_time": "HH:MM",
@@ -170,7 +183,7 @@ class ItineraryGeneratorService2:
         }},
         {{
           "order": 2,
-          "display_name": "다음 장소",
+          "display_name": "도톤보리 Dotonbori, Chuo Ward, Osaka, 542-0071 일본",
           "latitude": 위도,
           "longitude": 경도,
           "visit_time": "HH:MM",
@@ -188,7 +201,11 @@ class ItineraryGeneratorService2:
 
 ### 중요 사항:
 - **order**: 각 day 내에서 1부터 시작하는 방문 순서
-- **display_name**: 장소의 정확한 이름 (한국어 또는 현지어)
+- **display_name**: 장소명 + 한칸 공백 + 상세 주소 형식
+  - 형식: "장소명 주소"
+  - 예시: "유니버설 스튜디오 재팬 2 Chome-1-33 Sakurajima, Konohana Ward, Osaka, 554-0031 일본"
+  - 예시: "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본"
+  - **반드시 장소명과 주소 사이에 한칸 공백을 넣으세요**
 - **latitude, longitude**: 소수점 형식의 정확한 좌표
 - **visit_time**: 24시간 형식 "HH:MM" (예: "09:00", "14:30")
 - **travel_time**: 다음 장소로 가는 이동시간 (분 단위 정수), 마지막 visit는 0
