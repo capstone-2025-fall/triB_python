@@ -65,16 +65,14 @@ async def generate_itinerary_v2(request: ItineraryRequest2):
         # 요청 정보 로깅
         logger.info(
             f"V2 itinerary generation request: "
-            f"{len(request.places)} places, {request.user_request.days} days"
+            f"{len(request.places)} places, {request.days} days, "
+            f"{request.members} members, country: {request.country}"
         )
-        logger.info(f"Chat messages: {len(request.user_request.chat)}")
+        logger.info(f"Chat messages: {len(request.chat)}")
         logger.debug(f"Places: {request.places}")
 
         # Gemini로 일정 생성 (단순!)
-        itinerary = await itinerary_generator_service2.generate_itinerary(
-            request.places,
-            request.user_request,
-        )
+        itinerary = await itinerary_generator_service2.generate_itinerary(request)
 
         # 성공 로깅
         logger.info(

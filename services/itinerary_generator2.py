@@ -4,7 +4,7 @@ from typing import List
 from datetime import timedelta
 import google.generativeai as genai
 from config import settings
-from models.schemas2 import UserRequest2, ItineraryResponse2
+from models.schemas2 import ItineraryRequest2, ItineraryResponse2, PlaceWithTag, PlaceTag
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +22,13 @@ class ItineraryGeneratorService2:
 
     def _create_prompt_v2(
         self,
-        places: List[str],
-        user_request: UserRequest2,
+        request: ItineraryRequest2,
     ) -> str:
         """
         Gemini V2 프롬프트 생성
 
         Args:
-            places: 장소 이름 리스트
-            user_request: 사용자 요청
+            request: 일정 생성 요청
 
         Returns:
             완성된 프롬프트 문자열
@@ -38,33 +36,42 @@ class ItineraryGeneratorService2:
         # 날짜별 요일 계산
         weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
         date_info = []
-        for day_num in range(user_request.days):
-            current_date = user_request.start_date + timedelta(days=day_num)
+        for day_num in range(request.days):
+            current_date = request.start_date + timedelta(days=day_num)
             weekday = weekdays_kr[current_date.weekday()]
             date_info.append(f"Day {day_num + 1}: {current_date.strftime('%Y-%m-%d')} ({weekday})")
 
         # 채팅 내용 포맷팅
-        chat_text = "\n".join([f"- {msg}" for msg in user_request.chat])
+        chat_text = "\n".join([f"- {msg}" for msg in request.chat])
 
         # 규칙 포맷팅
         rule_text = ""
-        if user_request.rule:
-            rule_text = "\n".join([f"- {r}" for r in user_request.rule])
+        if request.rule:
+            rule_text = "\n".join([f"- {r}" for r in request.rule])
         else:
             rule_text = "없음"
 
         # 필수 방문 장소 포맷팅
         must_visit_text = ""
-        if user_request.preferences.must_visit:
-            must_visit_text = ", ".join(user_request.preferences.must_visit)
+        if request.must_visit:
+            must_visit_text = ", ".join(request.must_visit)
         else:
             must_visit_text = "없음"
 
-        # 숙소 정보 포맷팅
-        accommodation_text = user_request.preferences.accommodation or "없음 (추천 필요)"
+        # 숙소 정보 추출: places에서 place_tag가 HOME인 장소 찾기
+        home_places = [place for place in request.places if place.place_tag == PlaceTag.HOME]
+        if home_places:
+            # 사용자가 지정한 숙소가 있는 경우
+            accommodation_text = home_places[0].place_name
+            if len(home_places) > 1:
+                # 여러 숙소가 있는 경우 모두 표시
+                accommodation_text = ", ".join([place.place_name for place in home_places])
+        else:
+            # 숙소가 없는 경우 Gemini에게 추천 요청
+            accommodation_text = "없음 (추천 필요)"
 
-        # 장소 목록 포맷팅
-        places_text = "\n".join([f"- {place}" for place in places])
+        # 장소 목록 포맷팅 (place_name과 place_tag 포함)
+        places_text = "\n".join([f"- {place.place_name} ({place.place_tag.value})" for place in request.places])
 
         # 프롬프트 구성
         prompt = f"""## 당신의 역할
@@ -73,11 +80,18 @@ class ItineraryGeneratorService2:
 
 ## 입력 데이터
 
+### 여행 국가/도시
+{request.country}
+
+### 여행 인원
+{request.members}명
+
 ### 여행 기간
 {chr(10).join(date_info)}
-총 {user_request.days}일
+총 {request.days}일
 
 ### 고려 중인 장소 목록 (places)
+각 장소에는 사용자가 지정한 place_tag가 포함되어 있습니다.
 {places_text}
 
 ### 사용자 대화 내용 (chat)
@@ -92,14 +106,19 @@ class ItineraryGeneratorService2:
 ### 숙소 (accommodation)
 {accommodation_text}
 
-### 이동 수단 (travel_mode)
-{user_request.preferences.travel_mode}
-
 ## 작업 지시사항
 
-### 1. 채팅 분석
+### 1. 채팅 분석 및 이동 수단 추론
 - 사용자들의 대화를 읽고 여행 의도, 선호도, 패턴을 파악하세요
 - 대화에서 언급된 특정 요구사항이나 선호사항을 반영하세요
+- **이동 수단 추론**: 사용자 대화에서 이동 수단을 파악하세요
+  - 대화에서 명시적으로 언급된 경우:
+    - "렌터카", "차 빌려서", "자동차" → **DRIVE** (자동차)
+    - "지하철", "버스", "대중교통" → **TRANSIT** (대중교통)
+    - "걸어서", "도보", "산책" → **WALK** (도보)
+    - "자전거" → **BICYCLE** (자전거)
+  - **대화에 이동 수단 언급이 없으면 기본값으로 TRANSIT (대중교통)을 사용하세요**
+  - 추론한 이동 수단을 travel_time 계산에 반영하세요
 
 ### 2. 장소 선택 및 추천
 - 위의 "고려 중인 장소 목록 (places)"에서 적절한 장소를 선택하세요
@@ -110,13 +129,27 @@ class ItineraryGeneratorService2:
     → 적절한 카페를 추천하세요
 - **필수 방문 장소 (must_visit)는 반드시 일정에 포함하세요**
 - 장소의 특성, 소요시간, 지리적 위치를 고려하여 합리적으로 배치하세요
+- **place_tag 활용**:
+  - places에 포함된 장소를 일정에 사용할 때는 해당 place_tag를 그대로 사용하세요
+  - Gemini가 장소 정보를 찾지 못했을 때 place_tag를 참고하세요
+  - 예: 장소명만 있고 상세 정보가 없으면 place_tag로 장소 유형을 파악
+  - Gemini가 새로 추천하는 장소는 가장 적절한 place_tag를 선택하세요
 
 ### 3. 숙소 추천 및 관리
-- accommodation이 "없음 (추천 필요)"로 표시되어 있다면:
-  - **사용자 대화(chat)에서 숙소 관련 선호사항을 우선 반영하세요** (예: "깨끗한 호텔", "게스트하우스", "역 근처")
-  - 선호사항 중에서 위치, 접근성, 가격대, 편의성을 종합적으로 고려하여 추천하세요
-  - 관광지들의 중심에 위치하거나 대중교통 접근이 좋은 숙소를 선택하세요
-- accommodation이 제공되어 있다면 해당 숙소를 사용하고, Gemini가 정확한 좌표를 추론하세요
+- **숙소 결정 방법**:
+  - **우선순위 1**: places 필드에 place_tag가 "HOME"인 장소가 있다면, 그것이 사용자가 지정한 숙소입니다
+    - 이 경우 accommodation 필드에 해당 숙소명이 표시되어 있습니다
+    - 해당 숙소를 사용하고, Gemini가 정확한 좌표와 주소를 추론하세요
+  - **우선순위 2**: accommodation이 "없음 (추천 필요)"로 표시되어 있다면 숙소 추천이 필요합니다:
+    - **사용자 대화(chat)를 분석하여 숙소 관련 선호사항을 반영하세요**
+      - 예: "난바 쪽이 좋을까?", "호텔", "게스트하우스", "역 근처", "저렴한", "깨끗한" 등
+    - **비용 고려**: 대화에서 언급된 예산이나 가격 민감도를 파악하세요
+    - **사용자 취향 고려**: 대화 톤과 내용에서 여행 스타일을 파악하세요 (럭셔리/가성비/배낭여행 등)
+    - **접근성과 동선 효율성**을 최우선으로 고려하세요:
+      - 관광지들의 중심에 위치하거나 대중교통 접근이 좋은 숙소
+      - 주요 관광지까지의 평균 이동시간이 짧은 위치
+      - 이동 수단(travel_mode)을 고려한 최적 위치 선택
+    - 위 모든 요소를 종합하여 가장 적합한 숙소를 추천하세요
 
 ### 4. 숙소 왕복 일정 구성
 - **기본 원칙**: 일반적인 상황에서 하루 일정의 시작과 끝은 숙소여야 합니다
@@ -134,9 +167,9 @@ class ItineraryGeneratorService2:
 ### 5. 이동시간 계산
 - 각 visit의 `travel_time`은 **현재 장소에서 다음 장소로 가는 이동시간(분)**입니다
 - **마지막 visit의 travel_time은 반드시 0으로 설정하세요**
-- 이동 수단 "{user_request.preferences.travel_mode}" 기준으로 이동시간을 추론하세요:
+- **섹션 1에서 추론한 이동 수단**을 기준으로 이동시간을 계산하세요:
   - **DRIVE**: 자동차 (평균 40-60km/h, 도심 기준, 신호등 및 교통 상황 고려)
-  - **TRANSIT**: 대중교통 (지하철/버스, 환승시간 포함, 배차간격 고려)
+  - **TRANSIT**: 대중교통 (지하철/버스, 환승시간 포함, 배차간격 고려) - **기본값**
   - **WALK**: 도보 (평균 5km/h)
   - **BICYCLE**: 자전거 (평균 15km/h)
 - 지리적 거리와 도로 상황을 고려하여 현실적인 이동시간을 계산하세요
@@ -163,9 +196,21 @@ class ItineraryGeneratorService2:
   - 식사: 1-1.5시간
   - 카페/휴식: 0.5-1시간
 
+### 9. 예산 계산
+- 1인당 전체 여행 예산을 계산하세요
+- 포함 항목:
+  - 숙소 비용: 1박당 평균 가격 × 숙박 일수 (예: 중급 호텔 기준 1박 80,000원)
+  - 교통 비용: 공항 이동 + 시내 교통 (예: 공항 왕복 30,000원, 시내 교통 1일 10,000원)
+  - 식사 비용: 1일 3식 × 여행 일수 (예: 아침 8,000원, 점심 15,000원, 저녁 20,000원)
+  - 입장료: 테마파크, 박물관, 관광지 입장료 합계
+  - 기타 비용: 쇼핑, 간식, 기념품 등 (1일 약 30,000원)
+- 원화(KRW) 기준으로 계산하세요
+- 합리적인 중간 가격대를 기준으로 산정하세요
+- 환율 고려: 해외 여행인 경우 현지 화폐를 원화로 환산하세요
+
 ## 출력 형식
 
-다음 JSON 형식으로 일정을 생성하세요:
+**중요**: 다음 JSON 구조를 정확히 따르세요. budget은 itinerary 배열 밖에 있어야 합니다!
 
 ```json
 {{
@@ -175,18 +220,24 @@ class ItineraryGeneratorService2:
       "visits": [
         {{
           "order": 1,
-          "display_name": "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본",
-          "latitude": 위도 (float),
-          "longitude": 경도 (float),
-          "visit_time": "HH:MM",
-          "travel_time": 다음 장소로의 이동시간 (분, int)
+          "display_name": "오사카 성",
+          "name_address": "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본",
+          "place_tag": "TOURIST_SPOT",
+          "latitude": 34.6873,
+          "longitude": 135.5262,
+          "arrival": "09:00",
+          "departure": "11:30",
+          "travel_time": 30
         }},
         {{
           "order": 2,
-          "display_name": "도톤보리 Dotonbori, Chuo Ward, Osaka, 542-0071 일본",
-          "latitude": 위도,
-          "longitude": 경도,
-          "visit_time": "HH:MM",
+          "display_name": "도톤보리",
+          "name_address": "도톤보리 Dotonbori, Chuo Ward, Osaka, 542-0071 일본",
+          "place_tag": "TOURIST_SPOT",
+          "latitude": 34.6687,
+          "longitude": 135.5013,
+          "arrival": "12:00",
+          "departure": "14:00",
           "travel_time": 0
         }}
       ]
@@ -195,36 +246,69 @@ class ItineraryGeneratorService2:
       "day": 2,
       "visits": [...]
     }}
-  ]
+  ],
+  "budget": 500000
 }}
 ```
 
+**JSON 구조 주의사항**:
+- 최상위 객체에는 두 개의 필드만 있습니다: "itinerary"와 "budget"
+- "itinerary"는 배열이며, 각 요소는 day 객체입니다
+- "budget"은 "itinerary" 배열이 닫힌 후 객체의 속성으로 와야 합니다 (배열 안에 들어가면 안 됩니다)
+
 ### 중요 사항:
 - **order**: 각 day 내에서 1부터 시작하는 방문 순서
-- **display_name**: 장소명 + 한칸 공백 + 상세 주소 형식
+- **display_name**: 표시용 장소명만 (주소 제외)
+  - 형식: "장소명"
+  - 예시: "오사카 성", "유니버설 스튜디오 재팬", "도톤보리"
+  - 간결하고 명확한 이름 사용
+- **name_address**: 장소명 + 한칸 공백 + 상세 주소
   - 형식: "장소명 주소"
   - 예시: "유니버설 스튜디오 재팬 2 Chome-1-33 Sakurajima, Konohana Ward, Osaka, 554-0031 일본"
   - 예시: "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본"
   - **반드시 장소명과 주소 사이에 한칸 공백을 넣으세요**
+- **place_tag**: 장소 유형 태그 (문자열, 대문자)
+  - 가능한 값: "TOURIST_SPOT", "HOME", "RESTAURANT", "CAFE", "OTHER"
+  - 할당 규칙:
+    - **TOURIST_SPOT**: 관광지, 박물관, 테마파크, 사원, 성, 전망대 등
+    - **HOME**: 호텔, 게스트하우스, 숙소, 리조트 등
+    - **RESTAURANT**: 식당, 레스토랑, 음식점, 시장 (음식 중심) 등
+    - **CAFE**: 카페, 디저트 가게, 베이커리 등
+    - **OTHER**: 위 분류에 맞지 않는 경우 (공항, 역 등)
+  - Gemini가 새로 추천하는 장소는 가장 적절한 태그를 선택하세요
 - **latitude, longitude**: 소수점 형식의 정확한 좌표
-- **visit_time**: 24시간 형식 "HH:MM" (예: "09:00", "14:30")
+- **arrival**: 해당 장소에 도착하는 시간 (24시간 형식 "HH:MM", 예: "09:00", "14:30")
+  - 첫 번째 visit: 하루 일정 시작 시간 (예: 09:00)
+  - 이후 visit: 이전 장소의 departure + travel_time으로 계산
+- **departure**: 해당 장소에서 떠나는 시간 (24시간 형식 "HH:MM")
+  - arrival + 해당 장소 체류시간으로 계산
+  - 체류시간은 섹션 8의 가이드라인을 참고하세요
+  - 예: 오사카 성 arrival "09:00" → 2.5시간 체류 → departure "11:30"
 - **travel_time**: 다음 장소로 가는 이동시간 (분 단위 정수), 마지막 visit는 0
+  - 현재 장소의 departure부터 다음 장소의 arrival까지 소요되는 시간
+  - 예: 현재 장소 departure "11:30", travel_time 30분 → 다음 장소 arrival "12:00"
+- **budget**: 1인당 예상 예산 (정수, 원화 기준)
+  - 숙소, 교통, 식사, 입장료, 기타 비용을 모두 포함한 총 예산
+  - 예시: 2박 3일 오사카 여행 = 약 500,000원 (중급 호텔, 대중교통 이용 기준)
+
+## 필수 준수 사항
 - **순수 JSON만 반환하세요. 마크다운 코드 블록(```)이나 설명 텍스트 없이 JSON만 출력하세요.**
+- **JSON 구조를 정확히 지키세요**: 최상위는 객체이며, "itinerary" 배열과 "budget" 숫자 두 개의 속성만 가집니다
+- **budget은 itinerary 배열 밖에 위치해야 합니다** - 배열 안에 넣지 마세요
+- **유효한 JSON 형식**: 쉼표, 중괄호, 대괄호를 정확히 사용하세요
 """
 
         return prompt
 
     async def generate_itinerary(
         self,
-        places: List[str],
-        user_request: UserRequest2,
+        request: ItineraryRequest2,
     ) -> ItineraryResponse2:
         """
         V2 일정 생성 메인 함수
 
         Args:
-            places: 장소 이름 리스트 (Google Place ID 아님)
-            user_request: 사용자 요청 (채팅 내용 포함)
+            request: 일정 생성 요청 (장소, 채팅 내용 등 포함)
 
         Returns:
             ItineraryResponse2: 생성된 여행 일정
@@ -238,11 +322,12 @@ class ItineraryGeneratorService2:
         """
         try:
             # 프롬프트 생성
-            prompt = self._create_prompt_v2(places, user_request)
+            prompt = self._create_prompt_v2(request)
 
             logger.info(
-                f"Generating V2 itinerary: {len(places)} places, "
-                f"{user_request.days} days, {len(user_request.chat)} chat messages"
+                f"Generating V2 itinerary: {len(request.places)} places, "
+                f"{request.days} days, {len(request.chat)} chat messages, "
+                f"{request.members} members, country: {request.country}"
             )
             logger.debug(f"Prompt length: {len(prompt)} characters")
 
@@ -266,7 +351,14 @@ class ItineraryGeneratorService2:
                 itinerary_data = json.loads(response_text)
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parse error: {str(e)}")
-                logger.error(f"Response text: {response_text}")
+                logger.error(f"Full response text:\n{response_text}")
+
+                # 에러 위치 주변 텍스트 표시 (디버깅용)
+                error_pos = e.pos
+                start = max(0, error_pos - 100)
+                end = min(len(response_text), error_pos + 100)
+                logger.error(f"Error context (pos {error_pos}):\n...{response_text[start:end]}...")
+
                 raise Exception(f"Gemini returned invalid JSON: {str(e)}")
 
             # Pydantic 검증

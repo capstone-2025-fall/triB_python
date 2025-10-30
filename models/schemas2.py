@@ -1,34 +1,32 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from datetime import date
+from enum import Enum
 
 
-class Preferences2(BaseModel):
-    """V2 사용자 선호사항"""
-    must_visit: Optional[List[str]] = Field(
-        default=None,
-        description="필수 방문 장소 이름 리스트 (ID 아님)"
-    )
-    accommodation: Optional[str] = Field(
-        default=None,
-        description="숙소 이름 (없으면 Gemini가 추천)"
-    )
-    travel_mode: str = Field(
-        default="DRIVE",
-        description="이동 수단 (TRANSIT, DRIVE, WALK, BICYCLE)"
-    )
+class PlaceTag(str, Enum):
+    """장소 유형 태그"""
+    TOURIST_SPOT = "TOURIST_SPOT"  # 관광지
+    HOME = "HOME"  # 숙소
+    RESTAURANT = "RESTAURANT"  # 식당
+    CAFE = "CAFE"  # 카페
+    OTHER = "OTHER"  # 기타
 
 
-class UserRequest2(BaseModel):
-    """V2 사용자 요청"""
-    chat: List[str] = Field(
+class PlaceWithTag(BaseModel):
+    """태그가 포함된 장소 정보"""
+    place_name: str = Field(
         ...,
-        description="사용자 채팅 내용 배열 (의도 파악용)"
+        description="장소 이름"
     )
-    rule: Optional[List[str]] = Field(
-        default=None,
-        description="반드시 지켜야 할 규칙 (예: '첫날은 오사카성만')"
+    place_tag: PlaceTag = Field(
+        ...,
+        description="장소 유형 태그 (TOURIST_SPOT, HOME, RESTAURANT, CAFE, OTHER)"
     )
+
+
+class ItineraryRequest2(BaseModel):
+    """V2 일정 생성 요청"""
     days: int = Field(
         ...,
         ge=1,
@@ -38,16 +36,31 @@ class UserRequest2(BaseModel):
         ...,
         description="여행 시작 날짜 (YYYY-MM-DD)"
     )
-    preferences: Preferences2
-
-
-class ItineraryRequest2(BaseModel):
-    """V2 일정 생성 요청"""
-    places: List[str] = Field(
+    country: str = Field(
         ...,
-        description="장소 이름 리스트 (Google Place ID 아님!)"
+        description="여행 국가 및 도시 (예: '일본, 오사카')"
     )
-    user_request: UserRequest2
+    members: int = Field(
+        ...,
+        ge=1,
+        description="여행 인원 수"
+    )
+    places: List[PlaceWithTag] = Field(
+        ...,
+        description="태그가 포함된 장소 리스트 (place_tag='HOME'인 장소가 있으면 사용자 지정 숙소)"
+    )
+    must_visit: Optional[List[str]] = Field(
+        default=None,
+        description="필수 방문 장소 이름 리스트 (ID 아님)"
+    )
+    rule: Optional[List[str]] = Field(
+        default=None,
+        description="반드시 지켜야 할 규칙 (예: '첫날은 오사카성만')"
+    )
+    chat: List[str] = Field(
+        ...,
+        description="사용자 채팅 내용 배열 (의도 파악용, 숙소 및 이동수단 추론 가능)"
+    )
 
 
 class Visit2(BaseModel):
@@ -58,7 +71,15 @@ class Visit2(BaseModel):
     )
     display_name: str = Field(
         ...,
-        description="장소명"
+        description="표시용 장소명 (예: 오사카 성, 유니버설 스튜디오 재팬)"
+    )
+    name_address: str = Field(
+        ...,
+        description="장소명 + 주소 (예: 오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본)"
+    )
+    place_tag: PlaceTag = Field(
+        ...,
+        description="장소 유형 태그 (TOURIST_SPOT, HOME, RESTAURANT, CAFE, OTHER)"
     )
     latitude: float = Field(
         ...,
@@ -68,9 +89,13 @@ class Visit2(BaseModel):
         ...,
         description="경도"
     )
-    visit_time: str = Field(
+    arrival: str = Field(
         ...,
-        description="방문 시간 (HH:MM 형식)"
+        description="장소 도착 시간 (HH:MM 형식)"
+    )
+    departure: str = Field(
+        ...,
+        description="장소 출발 시간 (HH:MM 형식)"
     )
     travel_time: int = Field(
         ...,
@@ -95,4 +120,8 @@ class ItineraryResponse2(BaseModel):
     itinerary: List[DayItinerary2] = Field(
         ...,
         description="전체 일정"
+    )
+    budget: int = Field(
+        ...,
+        description="1인당 예상 예산 (원화 기준)"
     )
