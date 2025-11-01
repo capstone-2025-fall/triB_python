@@ -18,6 +18,8 @@ from google import genai
 from google.genai import types
 from config import settings
 import json
+from datetime import datetime
+from pathlib import Path
 
 
 def validate_rule_compliance_with_gemini(itinerary_data: dict, rules: list[str]) -> dict:
@@ -265,9 +267,158 @@ def validate_travel_times_with_grounding(itinerary_data: dict, tolerance_minutes
     }
 
 
+def generate_test_report(
+    test_status: str,
+    execution_time: float,
+    itinerary_data: dict,
+    request_data: dict,
+    rule_validation: dict,
+    travel_time_validation: dict
+) -> str:
+    """
+    E2E 테스트 결과를 마크다운 보고서로 생성
+
+    Args:
+        test_status: "PASSED" or "FAILED"
+        execution_time: 테스트 실행 시간 (초)
+        itinerary_data: 생성된 일정 데이터
+        request_data: 요청 데이터
+        rule_validation: 규칙 준수 검증 결과
+        travel_time_validation: 이동시간 검증 결과
+
+    Returns:
+        마크다운 형식의 보고서 문자열
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 전체 방문지 수 계산
+    total_visits = sum(len(day["visits"]) for day in itinerary_data["itinerary"])
+
+    report = f"""# E2E Test Report - V2 Itinerary Generation
+
+Generated: {timestamp}
+
+## Test Execution Summary
+
+- **Status**: {test_status}
+- **Execution Time**: {execution_time:.2f} seconds
+- **Total Validations**: {len(rule_validation['rule_results']) + travel_time_validation['statistics']['total_validated']}
+
+---
+
+## Generated Itinerary Overview
+
+- **Duration**: {len(itinerary_data['itinerary'])} days
+- **Total Visits**: {total_visits}
+- **Budget**: {itinerary_data['budget']:,} KRW per person
+- **Country**: {request_data['country']}
+- **Members**: {request_data['members']}
+
+### Day-by-Day Breakdown
+
+"""
+
+    # 각 날짜별 일정 추가
+    for day in itinerary_data["itinerary"]:
+        report += f"\n#### Day {day['day']} ({len(day['visits'])} visits)\n\n"
+        for visit in day["visits"]:
+            report += f"{visit['order']}. **{visit['display_name']}**\n"
+            report += f"   - Time: {visit['arrival']} - {visit['departure']}\n"
+            report += f"   - Location: ({visit['latitude']:.6f}, {visit['longitude']:.6f})\n"
+            report += f"   - Travel to next: {visit['travel_time']} minutes\n\n"
+
+    # 규칙 준수 검증 섹션
+    rules_passed = sum(1 for r in rule_validation['rule_results'] if r['followed'])
+    rules_total = len(rule_validation['rule_results'])
+
+    report += f"""---
+
+## Rule Compliance Validation (Gemini)
+
+- **Overall**: {rules_passed}/{rules_total} rules followed
+- **Status**: {'✅ PASSED' if rule_validation['all_rules_followed'] else '⚠️ WARNINGS'}
+
+### Detailed Results
+
+"""
+
+    for i, result in enumerate(rule_validation['rule_results'], 1):
+        status_icon = "✅" if result['followed'] else "❌"
+        report += f"{i}. {status_icon} **{result['rule']}**\n"
+        report += f"   - {result['explanation']}\n\n"
+
+    # 이동시간 검증 섹션
+    stats = travel_time_validation['statistics']
+    successful_validations = [r for r in travel_time_validation['validation_results'] if r['actual'] is not None]
+
+    report += f"""---
+
+## Travel Time Accuracy (Routes API v2)
+
+- **Average Deviation**: {stats['avg_deviation']:.1f} minutes
+- **Maximum Deviation**: {stats['max_deviation']} minutes
+- **Success Rate**: {len(successful_validations)}/{stats['total_validated']} routes validated
+- **Status**: {'✅ PASSED' if travel_time_validation['all_valid'] else '⚠️ WARNINGS'}
+
+### Detailed Results
+
+| Day | From | To | Expected | Actual | Deviation | Status |
+|-----|------|-----|----------|--------|-----------|--------|
+"""
+
+    for result in travel_time_validation['validation_results']:
+        if result['actual'] is not None:
+            status_icon = "✅" if result['valid'] else "⚠️"
+            report += f"| {result['day']} | {result['from']} | {result['to']} | {result['expected']}min | {result['actual']}min | {result['deviation']}min | {status_icon} |\n"
+        else:
+            error = result.get('error', 'Unknown error')
+            report += f"| {result['day']} | {result['from']} | {result['to']} | {result['expected']}min | N/A | N/A | ❌ ({error[:30]}) |\n"
+
+    # 결론 섹션
+    report += f"""
+---
+
+## Conclusion
+
+### Summary
+- Test execution **{test_status}**
+- Itinerary generated with {total_visits} visits across {len(itinerary_data['itinerary'])} days
+- Rule compliance: {rules_passed}/{rules_total} rules followed
+- Travel time accuracy: Average deviation of {stats['avg_deviation']:.1f} minutes
+
+### Key Findings
+"""
+
+    if not rule_validation['all_rules_followed']:
+        failed_rules = [r for r in rule_validation['rule_results'] if not r['followed']]
+        report += f"\n**⚠️ Rule Compliance Issues:**\n"
+        for rule in failed_rules:
+            report += f"- {rule['rule']}\n"
+
+    if not travel_time_validation['all_valid'] and successful_validations:
+        invalid_routes = [r for r in travel_time_validation['validation_results'] if r['actual'] is not None and not r['valid']]
+        report += f"\n**⚠️ Travel Time Deviations:**\n"
+        for route in invalid_routes:
+            report += f"- {route['from']} → {route['to']}: {route['deviation']}min deviation (expected {route['expected']}min, actual {route['actual']}min)\n"
+
+    if not successful_validations:
+        report += f"\n**⚠️ Routes API not available or not authorized**\n"
+
+    if rule_validation['all_rules_followed'] and (travel_time_validation['all_valid'] or not successful_validations):
+        report += f"\n**✅ All validations passed successfully!**\n"
+
+    report += f"\n---\n\n*Report generated by E2E Test Suite v2*\n"
+
+    return report
+
+
 @pytest.mark.asyncio
 async def test_itinerary_generation_v2_e2e():
     """V2 일정 생성 E2E 테스트"""
+
+    # 테스트 시작 시간 기록
+    import time
+    start_time = time.time()
 
     # 테스트 요청 데이터 (새로운 V2 형식)
     request_data = {
@@ -542,14 +693,61 @@ async def test_itinerary_generation_v2_e2e():
     # Check if we have any successful validations (API might not be authorized)
     successful_validations = [r for r in travel_time_validation["validation_results"] if r["actual"] is not None]
 
+    # 테스트 종료 시간 및 상태 결정
+    end_time = time.time()
+    execution_time = end_time - start_time
+
+    test_passed = True
+    test_status = "PASSED"
+
     if successful_validations:
-        # Only assert if we had successful validations
-        assert travel_time_validation["all_valid"], \
-            f"Some travel times deviate too much from actual routes (tolerance: 10 minutes)"
-        print(f"\n✓ All travel times are within acceptable range!")
+        try:
+            assert travel_time_validation["all_valid"], \
+                f"Some travel times deviate too much from actual routes (tolerance: 10 minutes)"
+            print(f"\n✓ All travel times are within acceptable range!")
+        except AssertionError as e:
+            test_passed = False
+            test_status = "FAILED"
+            print(f"\n⚠ Travel time validation failed: {e}")
     else:
         print(f"\n⚠ Travel time validation skipped: Google Routes API not authorized")
         print(f"  Note: Enable Routes API in Google Cloud Console to run this validation")
 
-    print(f"\n✅ V2 E2E test passed!")
+    # 보고서 생성
+    print(f"\n" + "=" * 60)
+    print(f"Generating Test Report...")
     print(f"=" * 60)
+
+    report = generate_test_report(
+        test_status=test_status,
+        execution_time=execution_time,
+        itinerary_data=data,
+        request_data=request_data,
+        rule_validation=rule_validation,
+        travel_time_validation=travel_time_validation
+    )
+
+    # 보고서 저장
+    report_dir = Path("test_reports")
+    report_dir.mkdir(exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_filename = f"e2e_itinerary2_report_{timestamp}.md"
+    report_path = report_dir / report_filename
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(report)
+
+    print(f"\n📄 Test report saved to: {report_path}")
+    print(f"   You can view it with: cat {report_path}")
+
+    if test_passed:
+        print(f"\n✅ V2 E2E test passed!")
+    else:
+        print(f"\n❌ V2 E2E test failed!")
+
+    print(f"=" * 60)
+
+    # 테스트 실패 시 assertion 발생
+    if not test_passed:
+        raise AssertionError("Some travel times deviate too much from actual routes (tolerance: 10 minutes)")
