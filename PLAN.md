@@ -578,7 +578,18 @@ request_data = {
   - [x] Commit 4-4: E2E 테스트 수정
   - [x] E2E 테스트 통과 (2025-01-30 검증 완료)
 
+- [x] PR #5: Google Maps Grounding 통합
+  - [x] Commit 5-1: requirements.txt 수정 (google-genai 1.47.0)
+  - [x] Commit 5-2: Service 코드 수정 (google-genai SDK + Maps Tool)
+  - [x] Commit 5-3: 프롬프트 업데이트 (Google Maps 활용 명시)
+  - [x] Commit 5-4: E2E 테스트 수정 (좌표/이동시간 검증)
+  - [x] E2E 테스트 통과 (2025-01-31 검증 완료)
+    - ✅ 좌표 정확도: 14/14 장소 모두 소수점 4자리 이상
+    - ✅ 이동시간 합리성: 평균 21.4분, 최대 50분
+    - ✅ 예산 산정: 650,000 KRW/인
+    - ✅ Google Maps Grounding 성공적으로 통합됨
+
 - [ ] 최종 검증
   - [ ] API 문서 확인 (Swagger)
   - [ ] 수동 테스트 실행
-  - [x] 모든 E2E 테스트 통과 (2025-01-30 검증 완료)
+  - [x] 모든 E2E 테스트 통과 (2025-01-31 검증 완료)

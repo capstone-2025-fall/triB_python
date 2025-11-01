@@ -1,24 +1,23 @@
 import logging
 import json
-from typing import List
+from typing import List, Dict
 from datetime import timedelta
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import settings
 from models.schemas2 import ItineraryRequest2, ItineraryResponse2, PlaceWithTag, PlaceTag
 
 logger = logging.getLogger(__name__)
-
-# Gemini API 초기화
-genai.configure(api_key=settings.google_api_key)
 
 
 class ItineraryGeneratorService2:
     """V2 일정 생성 서비스 (Gemini 중심)"""
 
     def __init__(self):
-        """Gemini 모델 초기화"""
-        self.model = genai.GenerativeModel("gemini-2.5-pro")
-        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-pro")
+        """Gemini 클라이언트 초기화"""
+        self.client = genai.Client(api_key=settings.google_api_key)
+        self.model_name = "gemini-2.5-pro"
+        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-pro and Google Maps grounding")
 
     def _create_prompt_v2(
         self,
@@ -120,13 +119,26 @@ class ItineraryGeneratorService2:
   - **대화에 이동 수단 언급이 없으면 기본값으로 TRANSIT (대중교통)을 사용하세요**
   - 추론한 이동 수단을 travel_time 계산에 반영하세요
 
-### 2. 장소 선택 및 추천
+### 2. Google Maps 데이터 활용 (필수)
+- **중요**: Google Maps 도구를 활용하여 모든 장소의 정보를 실시간으로 조회하세요
+- **조회 항목**:
+  - 정확한 좌표 (latitude, longitude): 소수점 6자리까지 정확한 좌표 사용
+  - 운영시간 (opening hours): 각 장소의 영업/개장 시간 확인
+  - 이동시간 (travel time): 실제 도로/대중교통 기반 이동시간 계산
+  - 상세 주소 (address): name_address 필드에 사용할 정확한 주소
+- **적용 방법**:
+  - 사용자가 입력한 장소명 → Google Maps로 검색하여 정확한 정보 조회
+  - Gemini가 추천하는 새로운 장소 → Google Maps로 검색하여 실존 여부 및 정보 확인
+  - 운영시간을 고려하여 방문 시간(arrival/departure) 조정
+  - 실제 이동시간을 기반으로 travel_time 계산 (교통 상황 고려)
+
+### 3. 장소 선택 및 추천
 - 위의 "고려 중인 장소 목록 (places)"에서 적절한 장소를 선택하세요
 - **중요**: places에 적합한 장소가 없거나 부족하다면 직접 장소를 찾아 추천하세요
   - 예: 채팅에 "맛있는 라멘 가게 가고 싶다"라고 했는데 places에 라멘집이 없으면
-    → 해당 지역의 유명한 라멘 가게를 찾아서 일정에 포함 (장소명과 좌표 포함)
+    → Google Maps로 해당 지역의 유명한 라멘 가게를 찾아서 일정에 포함 (장소명과 좌표 포함)
   - 예: 채팅에 "카페에서 여유롭게"라고 했는데 places에 카페가 없으면
-    → 적절한 카페를 추천하세요
+    → Google Maps로 적절한 카페를 추천하세요
 - **필수 방문 장소 (must_visit)는 반드시 일정에 포함하세요**
 - 장소의 특성, 소요시간, 지리적 위치를 고려하여 합리적으로 배치하세요
 - **place_tag 활용**:
@@ -135,7 +147,7 @@ class ItineraryGeneratorService2:
   - 예: 장소명만 있고 상세 정보가 없으면 place_tag로 장소 유형을 파악
   - Gemini가 새로 추천하는 장소는 가장 적절한 place_tag를 선택하세요
 
-### 3. 숙소 추천 및 관리
+### 4. 숙소 추천 및 관리
 - **숙소 결정 방법**:
   - **우선순위 1**: places 필드에 place_tag가 "HOME"인 장소가 있다면, 그것이 사용자가 지정한 숙소입니다
     - 이 경우 accommodation 필드에 해당 숙소명이 표시되어 있습니다
@@ -151,7 +163,7 @@ class ItineraryGeneratorService2:
       - 이동 수단(travel_mode)을 고려한 최적 위치 선택
     - 위 모든 요소를 종합하여 가장 적합한 숙소를 추천하세요
 
-### 4. 숙소 왕복 일정 구성
+### 5. 숙소 왕복 일정 구성
 - **기본 원칙**: 일반적인 상황에서 하루 일정의 시작과 끝은 숙소여야 합니다
   - 구조: **숙소 (출발) → 관광지1 → 관광지2 → ... → 숙소 (귀환)**
   - 첫 visit은 숙소 출발, 마지막 visit은 숙소 귀환으로 설정하세요
@@ -164,17 +176,18 @@ class ItineraryGeneratorService2:
   - 예: "첫날 공항에서 출발" → 첫날은 "공항 → 관광지 → 숙소"로 구성
   - 규칙이 숙소 왕복과 충돌하면 **규칙을 우선**하되, 가능한 경우 숙소 왕복을 유지하세요
 
-### 5. 이동시간 계산
+### 6. 이동시간 계산 (Google Maps 기반)
+- **중요**: Google Maps 도구를 사용하여 실제 이동시간을 조회하세요
 - 각 visit의 `travel_time`은 **현재 장소에서 다음 장소로 가는 이동시간(분)**입니다
 - **마지막 visit의 travel_time은 반드시 0으로 설정하세요**
-- **섹션 1에서 추론한 이동 수단**을 기준으로 이동시간을 계산하세요:
-  - **DRIVE**: 자동차 (평균 40-60km/h, 도심 기준, 신호등 및 교통 상황 고려)
-  - **TRANSIT**: 대중교통 (지하철/버스, 환승시간 포함, 배차간격 고려) - **기본값**
-  - **WALK**: 도보 (평균 5km/h)
-  - **BICYCLE**: 자전거 (평균 15km/h)
-- 지리적 거리와 도로 상황을 고려하여 현실적인 이동시간을 계산하세요
+- **섹션 1에서 추론한 이동 수단**을 기준으로 Google Maps에 이동시간을 조회하세요:
+  - **DRIVE**: 자동차 경로 기반 이동시간
+  - **TRANSIT**: 대중교통 경로 기반 이동시간 (환승 포함) - **기본값**
+  - **WALK**: 도보 경로 기반 이동시간
+  - **BICYCLE**: 자전거 경로 기반 이동시간
+- 실시간 교통 상황, 대중교통 배차 간격을 고려한 현실적인 이동시간을 반영하세요
 
-### 6. 규칙 준수 (최우선)
+### 7. 규칙 준수 (최우선)
 - **"반드시 지켜야 할 규칙 (rule)"의 모든 항목을 일정에 반영하세요**
 - **우선순위**: 규칙(rule) > 숙소 왕복 > 기본 패턴
 - 예시:
@@ -183,11 +196,15 @@ class ItineraryGeneratorService2:
   - "마지막날 공항으로" → 마지막날은 숙소 대신 공항으로 종료
 - 규칙이 충돌하면 사용자의 안전과 편의를 최우선으로 고려하세요
 
-### 7. 운영시간 고려
-- 각 장소의 운영시간을 고려하여 방문 시간을 설정하세요
+### 8. 운영시간 고려 (Google Maps 기반)
+- **중요**: Google Maps 도구를 사용하여 각 장소의 정확한 운영시간을 조회하세요
 - 관광지는 개장 시간 내에 방문하도록 일정을 조정하세요
+- 휴무일(정기 휴무, 공휴일 등)을 고려하여 방문 가능한 날짜에만 포함하세요
+- 예시:
+  - 박물관이 월요일 휴무 → 월요일에는 일정에 포함하지 않음
+  - 테마파크 운영시간 09:00-21:00 → arrival은 09:00 이후, departure는 21:00 이전
 
-### 8. 체류시간 고려
+### 9. 체류시간 고려
 - 각 장소별 적절한 체류시간을 고려하세요:
   - 대형 테마파크 (유니버설 스튜디오 등): 6-10시간
   - 주요 관광지 (성, 사원 등): 1.5-3시간
@@ -196,7 +213,7 @@ class ItineraryGeneratorService2:
   - 식사: 1-1.5시간
   - 카페/휴식: 0.5-1시간
 
-### 9. 예산 계산
+### 10. 예산 계산
 - 1인당 전체 여행 예산을 계산하세요
 - 포함 항목:
   - 숙소 비용: 1박당 평균 가격 × 숙박 일수 (예: 중급 호텔 기준 1박 80,000원)
@@ -300,6 +317,47 @@ class ItineraryGeneratorService2:
 
         return prompt
 
+    def _infer_location_from_country(self, country: str) -> Dict[str, float]:
+        """
+        country 텍스트에서 중심 좌표 추론
+
+        Args:
+            country: 여행 국가/도시 텍스트 (예: "일본, 오사카", "도쿄")
+
+        Returns:
+            Dict[str, float]: latitude, longitude를 포함한 딕셔너리
+
+        Note:
+            간단한 매핑 테이블 사용. 매칭되지 않으면 기본값 (0.0, 0.0) 반환
+            (Gemini가 텍스트 기반으로 추론)
+        """
+        location_map = {
+            "오사카": {"latitude": 34.6937, "longitude": 135.5023},
+            "osaka": {"latitude": 34.6937, "longitude": 135.5023},
+            "도쿄": {"latitude": 35.6762, "longitude": 139.6503},
+            "tokyo": {"latitude": 35.6762, "longitude": 139.6503},
+            "교토": {"latitude": 35.0116, "longitude": 135.7681},
+            "kyoto": {"latitude": 35.0116, "longitude": 135.7681},
+            "후쿠오카": {"latitude": 33.5904, "longitude": 130.4017},
+            "fukuoka": {"latitude": 33.5904, "longitude": 130.4017},
+            "서울": {"latitude": 37.5665, "longitude": 126.9780},
+            "seoul": {"latitude": 37.5665, "longitude": 126.9780},
+            "부산": {"latitude": 35.1796, "longitude": 129.0756},
+            "busan": {"latitude": 35.1796, "longitude": 129.0756},
+            "제주": {"latitude": 33.4996, "longitude": 126.5312},
+            "jeju": {"latitude": 33.4996, "longitude": 126.5312},
+        }
+
+        country_lower = country.lower()
+        for key, coords in location_map.items():
+            if key in country_lower:
+                logger.info(f"Location center inferred: {country} → ({coords['latitude']}, {coords['longitude']})")
+                return coords
+
+        # 기본값 (Gemini가 텍스트 기반 추론)
+        logger.warning(f"Location not found in map, using default (0.0, 0.0): {country}")
+        return {"latitude": 0.0, "longitude": 0.0}
+
     async def generate_itinerary(
         self,
         request: ItineraryRequest2,
@@ -324,20 +382,36 @@ class ItineraryGeneratorService2:
             # 프롬프트 생성
             prompt = self._create_prompt_v2(request)
 
+            # 위치 기준점 추론
+            center_coords = self._infer_location_from_country(request.country)
+
             logger.info(
                 f"Generating V2 itinerary: {len(request.places)} places, "
                 f"{request.days} days, {len(request.chat)} chat messages, "
                 f"{request.members} members, country: {request.country}"
             )
+            logger.info(f"Location center: ({center_coords['latitude']}, {center_coords['longitude']})")
             logger.debug(f"Prompt length: {len(prompt)} characters")
 
-            # Gemini API 호출
-            logger.info("Calling Gemini API...")
-            response = self.model.generate_content(
-                prompt,
-                generation_config=genai.GenerationConfig(
+            # Gemini API 호출 (Google Maps Grounding 활성화)
+            logger.info("Calling Gemini API with Google Maps grounding...")
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
                     temperature=0.7,
-                    response_mime_type="application/json",
+                    # Note: response_mime_type="application/json" is not supported with Google Maps tool
+                    tools=[
+                        types.Tool(google_maps=types.GoogleMaps())  # ✅ Google Maps Grounding Tool
+                    ],
+                    tool_config=types.ToolConfig(
+                        retrieval_config=types.RetrievalConfig(
+                            lat_lng=types.LatLng(
+                                latitude=center_coords["latitude"],
+                                longitude=center_coords["longitude"]
+                            )
+                        )
+                    )
                 ),
             )
 
@@ -345,6 +419,14 @@ class ItineraryGeneratorService2:
             response_text = response.text
             logger.info(f"Received response: {len(response_text)} characters")
             logger.debug(f"Response preview: {response_text[:200]}...")
+
+            # 마크다운 코드 블록 제거 (Google Maps tool 사용 시 response_mime_type 미지원)
+            if response_text.startswith("```json"):
+                response_text = response_text.replace("```json\n", "").replace("```", "").strip()
+                logger.info("Removed markdown code block from response")
+            elif response_text.startswith("```"):
+                response_text = response_text.replace("```\n", "").replace("```", "").strip()
+                logger.info("Removed markdown code block from response")
 
             # JSON 파싱
             try:
