@@ -1073,11 +1073,11 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
         request: ItineraryRequest2
     ) -> Dict:
         """
-        생성된 일정이 사용자 요구사항을 준수하는지 검증
+        생성된 일정이 사용자 요구사항을 준수하는지 검증 (Grounding 기반)
 
         Args:
             itinerary: 생성된 일정
-            request: 원본 요청 (must_visit, days 등 포함)
+            request: 원본 요청 (must_visit, days, rules 등 포함)
 
         Returns:
             검증 결과 딕셔너리:
@@ -1085,16 +1085,22 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                 "all_valid": bool,
                 "must_visit": {...},
                 "days": {...},
-                "operating_hours": {...}
+                "rules": {...},
+                "operating_hours": {...},
+                "travel_time": {...}
             }
         """
-        must_visit_list = request.must_visit if request.must_visit else []
+        from services.validators import validate_all_with_grounding
 
-        # validators.validate_all() 호출
-        validation_results = validate_all(
+        must_visit_list = request.must_visit if request.must_visit else []
+        rules_list = request.rule if request.rule else []
+
+        # validators.validate_all_with_grounding() 호출
+        validation_results = validate_all_with_grounding(
             itinerary=itinerary,
             must_visit=must_visit_list,
-            expected_days=request.days
+            expected_days=request.days,
+            rules=rules_list
         )
 
         return validation_results
@@ -1105,7 +1111,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
         validation_results: Dict
     ) -> ItineraryRequest2:
         """
-        검증 실패 사항을 프롬프트에 추가하여 재시도용 요청 생성
+        검증 실패 사항을 프롬프트에 추가하여 재시도용 요청 생성 (강화 버전)
 
         Args:
             request: 원본 요청
@@ -1116,7 +1122,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
         """
         feedback = ["⚠️ 이전 시도에서 다음 문제가 발생했습니다. 반드시 수정해주세요:"]
 
-        # Must-visit 위반
+        # 1. Must-visit 위반
         if not validation_results.get("must_visit", {}).get("is_valid", True):
             missing = validation_results["must_visit"].get("missing", [])
             if missing:
@@ -1125,7 +1131,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                     f"→ 이 장소들을 반드시 일정에 포함시켜야 합니다!"
                 )
 
-        # Days 위반
+        # 2. Days 위반
         if not validation_results.get("days", {}).get("is_valid", True):
             actual = validation_results["days"].get("actual", 0)
             expected = validation_results["days"].get("expected", 0)
@@ -1134,19 +1140,50 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                 f"→ 정확히 {expected}개의 day를 생성해야 합니다!"
             )
 
-        # Operating hours 위반
+        # 3. Rules 위반 (NEW)
+        if not validation_results.get("rules", {}).get("is_valid", True):
+            violations = validation_results["rules"].get("violations", [])
+            if violations:
+                violation_details = []
+                for v in violations[:3]:  # 최대 3개만 표시
+                    violation_details.append(
+                        f"'{v['rule']}' - {v['explanation']}"
+                    )
+                feedback.append(
+                    f"🔴 규칙 위반: {'; '.join(violation_details)} "
+                    f"→ 모든 규칙을 반드시 준수해야 합니다!"
+                )
+
+        # 4. Operating hours 위반
         if not validation_results.get("operating_hours", {}).get("is_valid", True):
             violations = validation_results["operating_hours"].get("violations", [])
             if violations:
                 violation_details = []
                 for v in violations[:3]:  # 최대 3개만 표시
                     violation_details.append(
-                        f"Day {v['day']}: {v['place']} ({v['arrival']}-{v['departure']})"
+                        f"Day {v['day']}: {v['place']} ({v.get('arrival', 'N/A')}-{v.get('departure', 'N/A')})"
                     )
                 feedback.append(
-                    f"🔴 비정상 방문시간 (새벽 2-5시): {', '.join(violation_details)} "
-                    f"→ 일반적인 운영시간(오전 9시~저녁 10시)에 방문하도록 조정하세요!"
+                    f"🔴 운영시간 위반: {', '.join(violation_details)} "
+                    f"→ 실제 운영시간 내에 방문하도록 조정하세요!"
                 )
+
+        # 5. Travel time 정확도 위반 (NEW)
+        if not validation_results.get("travel_time", {}).get("is_valid", True):
+            violations = validation_results["travel_time"].get("violations", [])
+            if violations:
+                violation_details = []
+                for v in violations[:3]:  # 최대 3개만 표시
+                    if v.get("actual_time") is not None:
+                        violation_details.append(
+                            f"Day {v['day']}: {v.get('from_place', 'N/A')} → {v.get('to_place', 'N/A')} "
+                            f"(예상: {v.get('expected_time', 'N/A')}분, 실제: {v.get('actual_time', 'N/A')}분)"
+                        )
+                if violation_details:
+                    feedback.append(
+                        f"🔴 이동시간 오차 (허용: 10분): {'; '.join(violation_details)} "
+                        f"→ Google Maps 기반 실제 이동시간을 정확히 반영해주세요!"
+                    )
 
         # 기존 chat에 피드백 추가하여 새 요청 생성
         # Pydantic 모델은 불변이므로 model_copy 사용
