@@ -10,6 +10,9 @@ from datetime import time
 from models.schemas2 import ItineraryResponse2, Visit2
 import httpx
 from config import settings
+import json
+from google import genai
+from google.genai import types
 
 
 def extract_all_place_names(itinerary: ItineraryResponse2) -> List[str]:
@@ -643,3 +646,148 @@ def validate_operating_hours_with_grounding(
         "total_validated": total_validated,
         "statistics": statistics
     }
+
+
+def validate_rules_with_gemini(
+    itinerary: ItineraryResponse2,
+    rules: List[str]
+) -> Dict[str, Any]:
+    """
+    Validate rule compliance using Gemini API.
+
+    This function uses Gemini to verify that the generated itinerary
+    follows all user-specified rules. Gemini evaluates whether the
+    intent of each rule is satisfied, not just literal matching.
+
+    Args:
+        itinerary: The generated itinerary response
+        rules: List of rules that must be followed
+
+    Returns:
+        Dictionary with validation results:
+        {
+            "is_valid": bool,                       # True if all rules are followed
+            "violations": List[Dict],               # List of rule violations
+            "total_violations": int,                # Number of rules violated
+            "total_rules": int,                     # Total number of rules checked
+            "rule_results": List[Dict]              # Detailed results for each rule
+        }
+
+    Example rule:
+        "첫날은 오사카성 정도만 가자" -> Checks if Day 1 includes Osaka Castle
+                                       and doesn't have too many activities
+
+    Note:
+        - Uses Gemini 2.5-pro for rule validation
+        - Requires valid google_api_key in settings
+        - Temperature is set to 0.3 for consistent validation
+    """
+    if not rules:
+        return {
+            "is_valid": True,
+            "violations": [],
+            "total_violations": 0,
+            "total_rules": 0,
+            "rule_results": []
+        }
+
+    # Initialize Gemini client
+    client = genai.Client(api_key=settings.google_api_key)
+
+    # Convert itinerary to readable text format
+    itinerary_text = ""
+    for day in itinerary.itinerary:
+        itinerary_text += f"\n=== Day {day.day} ===\n"
+        for visit in day.visits:
+            itinerary_text += f"{visit.order}. {visit.display_name} ({visit.arrival}-{visit.departure})\n"
+
+    # Format rules
+    rules_text = "\n".join([f"{i+1}. {rule}" for i, rule in enumerate(rules)])
+
+    # Construct validation prompt
+    prompt = f"""다음 여행 일정이 주어진 규칙들을 모두 따르고 있는지 검증해주세요.
+
+**여행 일정:**
+{itinerary_text}
+
+**따라야 할 규칙:**
+{rules_text}
+
+각 규칙에 대해 다음 형식의 JSON으로 응답해주세요:
+{{
+    "rule_results": [
+        {{
+            "rule": "규칙 원문",
+            "followed": true 또는 false,
+            "explanation": "규칙이 지켜졌는지/안 지켜졌는지에 대한 간단한 설명"
+        }}
+    ]
+}}
+
+규칙 검증 기준:
+- 정확히 일치할 필요는 없고, 규칙의 의도가 지켜졌는지 확인
+- 예: "첫날은 오사카성 정도만 가자"는 첫날에 오사카성이 포함되고 무리하지 않은 일정이면 OK
+- 예: "둘째날 유니버설 하루 종일"은 둘째날에 유니버설이 대부분의 시간을 차지하면 OK"""
+
+    try:
+        # Call Gemini API
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,  # Low temperature for consistent validation
+                response_mime_type="application/json"
+            )
+        )
+
+        result_text = response.text.strip()
+
+        # Parse JSON response
+        if result_text.startswith("```json"):
+            result_text = result_text.replace("```json", "").replace("```", "").strip()
+
+        result = json.loads(result_text)
+
+        # Extract violations
+        violations = []
+        for rule_result in result["rule_results"]:
+            if not rule_result["followed"]:
+                violations.append({
+                    "rule": rule_result["rule"],
+                    "explanation": rule_result["explanation"],
+                    "issue": f"Rule not followed: {rule_result['rule']}"
+                })
+
+        return {
+            "is_valid": len(violations) == 0,
+            "violations": violations,
+            "total_violations": len(violations),
+            "total_rules": len(rules),
+            "rule_results": result["rule_results"]
+        }
+
+    except Exception as e:
+        # If validation fails, mark all rules as violated
+        violations = [
+            {
+                "rule": rule,
+                "explanation": f"Validation error: {str(e)}",
+                "issue": f"Failed to validate rule: {rule}"
+            }
+            for rule in rules
+        ]
+
+        return {
+            "is_valid": False,
+            "violations": violations,
+            "total_violations": len(rules),
+            "total_rules": len(rules),
+            "rule_results": [
+                {
+                    "rule": rule,
+                    "followed": False,
+                    "explanation": f"Validation error: {str(e)}"
+                }
+                for rule in rules
+            ]
+        }

@@ -1209,3 +1209,139 @@ def test_validate_operating_hours_with_grounding_multiple_days():
     result = validate_operating_hours_with_grounding(itinerary)
 
     assert result["total_validated"] == 2
+
+
+# =============================================================================
+# validate_rules_with_gemini() Tests
+# =============================================================================
+
+def test_validate_rules_with_gemini_no_rules():
+    """
+    Test validate_rules_with_gemini with no rules.
+    """
+    from services.validators import validate_rules_with_gemini
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_rules_with_gemini(itinerary, [])
+
+    assert result["is_valid"] is True
+    assert result["total_rules"] == 0
+    assert len(result["violations"]) == 0
+    assert len(result["rule_results"]) == 0
+
+
+def test_validate_rules_with_gemini_structure():
+    """
+    Test that validate_rules_with_gemini returns proper structure.
+
+    Note: This test uses real Gemini API calls.
+    """
+    from services.validators import validate_rules_with_gemini
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    rules = ["첫날은 경복궁을 방문해야 함"]
+
+    result = validate_rules_with_gemini(itinerary, rules)
+
+    assert "is_valid" in result
+    assert "violations" in result
+    assert "total_violations" in result
+    assert "total_rules" in result
+    assert "rule_results" in result
+    assert result["total_rules"] == 1
+    assert len(result["rule_results"]) == 1
+
+
+def test_validate_rules_with_gemini_multiple_rules():
+    """
+    Test validate_rules_with_gemini with multiple rules.
+    """
+    from services.validators import validate_rules_with_gemini
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=15
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Bukchon Hanok Village",
+                        name_address="Bukchon Hanok Village, 37 Gyedong-gil, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5825,
+                        longitude=126.9830,
+                        arrival="12:15",
+                        departure="14:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    rules = [
+        "첫날은 경복궁을 방문해야 함",
+        "북촌한옥마을을 포함해야 함"
+    ]
+
+    result = validate_rules_with_gemini(itinerary, rules)
+
+    assert result["total_rules"] == 2
+    assert len(result["rule_results"]) == 2
