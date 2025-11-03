@@ -766,3 +766,245 @@ def test_validate_all_travel_time_fails():
     assert result["days"]["is_valid"] is True
     assert result["operating_hours"]["is_valid"] is True
     assert result["travel_time"]["is_valid"] is False
+
+
+# =============================================================================
+# validate_travel_time_with_grounding() Tests
+# =============================================================================
+
+def test_validate_travel_time_with_grounding_valid():
+    """
+    Test validate_travel_time_with_grounding with valid travel times.
+
+    Note: This test uses real Google Routes API calls.
+    It may fail if API key is invalid or API is unavailable.
+    """
+    from services.validators import validate_travel_time_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    # Create itinerary with realistic Seoul locations
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=15  # Approximately 15 min to Bukchon
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Bukchon Hanok Village",
+                        name_address="Bukchon Hanok Village, 37 Gyedong-gil, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5825,
+                        longitude=126.9830,
+                        arrival="11:15",
+                        departure="13:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)
+
+    # Should be valid (or have minor deviations within tolerance)
+    assert "is_valid" in result
+    assert "violations" in result
+    assert "total_validated" in result
+    assert "statistics" in result
+    assert result["total_validated"] == 1
+
+
+def test_validate_travel_time_with_grounding_single_visit():
+    """
+    Test validate_travel_time_with_grounding with single visit (no routes to validate).
+    """
+    from services.validators import validate_travel_time_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)
+
+    assert result["is_valid"] is True
+    assert result["total_validated"] == 0
+    assert len(result["violations"]) == 0
+
+
+def test_validate_travel_time_with_grounding_multiple_days():
+    """
+    Test validate_travel_time_with_grounding with multiple days.
+    """
+    from services.validators import validate_travel_time_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=15
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Bukchon Hanok Village",
+                        name_address="Bukchon Hanok Village, 37 Gyedong-gil, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5825,
+                        longitude=126.9830,
+                        arrival="11:15",
+                        departure="13:00",
+                        travel_time=0
+                    )
+                ]
+            ),
+            DayItinerary2(
+                day=2,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="N Seoul Tower",
+                        name_address="N Seoul Tower, 105 Namsangongwon-gil, Yongsan-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5512,
+                        longitude=126.9882,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=20
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Myeongdong",
+                        name_address="Myeongdong, Jung-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5636,
+                        longitude=126.9826,
+                        arrival="11:20",
+                        departure="13:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)
+
+    assert result["total_validated"] == 2
+    assert "statistics" in result
+    assert "avg_deviation" in result["statistics"]
+    assert "max_deviation" in result["statistics"]
+
+
+def test_validate_travel_time_with_grounding_empty_itinerary():
+    """
+    Test validate_travel_time_with_grounding with empty itinerary.
+    """
+    from services.validators import validate_travel_time_with_grounding
+    from models.schemas2 import ItineraryResponse2
+
+    itinerary = ItineraryResponse2(
+        itinerary=[],
+        budget=100000
+    )
+
+    result = validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)
+
+    assert result["is_valid"] is True
+    assert result["total_validated"] == 0
+    assert len(result["violations"]) == 0
+    assert result["statistics"]["avg_deviation"] == 0
+    assert result["statistics"]["max_deviation"] == 0
+
+
+def test_validate_travel_time_with_grounding_custom_tolerance():
+    """
+    Test validate_travel_time_with_grounding with custom tolerance.
+    """
+    from services.validators import validate_travel_time_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=15
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Bukchon Hanok Village",
+                        name_address="Bukchon Hanok Village, 37 Gyedong-gil, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5825,
+                        longitude=126.9830,
+                        arrival="11:15",
+                        departure="13:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    # Test with very strict tolerance (1 minute)
+    result_strict = validate_travel_time_with_grounding(itinerary, tolerance_minutes=1)
+
+    # Test with lenient tolerance (30 minutes)
+    result_lenient = validate_travel_time_with_grounding(itinerary, tolerance_minutes=30)
+
+    assert result_strict["total_validated"] == 1
+    assert result_lenient["total_validated"] == 1
+    # Lenient tolerance should have fewer or equal violations
+    assert len(result_lenient["violations"]) <= len(result_strict["violations"])

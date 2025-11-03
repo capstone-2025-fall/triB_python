@@ -8,6 +8,8 @@ Gemini-generated itineraries comply with user requirements.
 from typing import List, Dict, Any
 from datetime import time
 from models.schemas2 import ItineraryResponse2, Visit2
+import httpx
+from config import settings
 
 
 def extract_all_place_names(itinerary: ItineraryResponse2) -> List[str]:
@@ -305,4 +307,194 @@ def validate_all(
         "days": days_result,
         "operating_hours": hours_result,
         "travel_time": travel_time_result
+    }
+
+
+def validate_travel_time_with_grounding(
+    itinerary: ItineraryResponse2,
+    tolerance_minutes: int = 10
+) -> Dict[str, Any]:
+    """
+    Validate travel_time accuracy using Google Routes API v2.
+
+    This function verifies that the travel_time values in the itinerary
+    match actual travel times from Google Routes API within a tolerance.
+
+    Args:
+        itinerary: The generated itinerary response
+        tolerance_minutes: Maximum allowed deviation in minutes (default: 10)
+
+    Returns:
+        Dictionary with validation results:
+        {
+            "is_valid": bool,                       # True if all times are within tolerance
+            "violations": List[Dict],               # List of travel time violations
+            "total_violations": int,                # Number of violations found
+            "total_validated": int,                 # Total number of routes validated
+            "statistics": {
+                "avg_deviation": float,             # Average deviation in minutes
+                "max_deviation": int,               # Maximum deviation found
+                "min_deviation": int                # Minimum deviation found
+            }
+        }
+
+    Note:
+        - Uses DRIVE mode with TRAFFIC_AWARE routing preference
+        - Skips last visit of each day (travel_time should be 0)
+        - Requires valid google_maps_api_key in settings
+    """
+    violations = []
+    deviations = []
+    total_validated = 0
+
+    # Routes API v2 endpoint
+    routes_api_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+
+    for day in itinerary.itinerary:
+        visits = day.visits
+
+        # Skip if no visits or only one visit
+        if len(visits) <= 1:
+            continue
+
+        # Validate travel times for all visits except the last one
+        for i in range(len(visits) - 1):
+            current_visit = visits[i]
+            next_visit = visits[i + 1]
+            expected_time = current_visit.travel_time
+
+            total_validated += 1
+
+            try:
+                # Prepare request body for Google Routes API v2
+                request_body = {
+                    "origin": {
+                        "location": {
+                            "latLng": {
+                                "latitude": current_visit.latitude,
+                                "longitude": current_visit.longitude
+                            }
+                        }
+                    },
+                    "destination": {
+                        "location": {
+                            "latLng": {
+                                "latitude": next_visit.latitude,
+                                "longitude": next_visit.longitude
+                            }
+                        }
+                    },
+                    "travelMode": "DRIVE",
+                    "routingPreference": "TRAFFIC_AWARE",
+                    "computeAlternativeRoutes": False,
+                    "languageCode": "ko-KR",
+                    "units": "METRIC"
+                }
+
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": settings.google_maps_api_key,
+                    "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
+                }
+
+                # Make API request
+                with httpx.Client() as client:
+                    response = client.post(
+                        routes_api_url,
+                        json=request_body,
+                        headers=headers,
+                        timeout=10.0
+                    )
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    if "routes" in data and len(data["routes"]) > 0:
+                        # Parse duration (format: "123s")
+                        duration_str = data["routes"][0]["duration"]
+                        actual_time_seconds = int(duration_str.rstrip("s"))
+                        actual_time_minutes = round(actual_time_seconds / 60)
+
+                        # Calculate deviation
+                        deviation = abs(expected_time - actual_time_minutes)
+                        deviations.append(deviation)
+
+                        # Check if within tolerance
+                        if deviation > tolerance_minutes:
+                            violations.append({
+                                "day": day.day,
+                                "from_place": current_visit.display_name,
+                                "to_place": next_visit.display_name,
+                                "from_order": current_visit.order,
+                                "expected_time": expected_time,
+                                "actual_time": actual_time_minutes,
+                                "deviation": deviation,
+                                "tolerance": tolerance_minutes,
+                                "issue": f"Travel time deviation of {deviation} minutes exceeds tolerance of {tolerance_minutes} minutes"
+                            })
+                    else:
+                        # No route found
+                        violations.append({
+                            "day": day.day,
+                            "from_place": current_visit.display_name,
+                            "to_place": next_visit.display_name,
+                            "from_order": current_visit.order,
+                            "expected_time": expected_time,
+                            "actual_time": None,
+                            "deviation": None,
+                            "tolerance": tolerance_minutes,
+                            "issue": "No route found by Google Routes API",
+                            "error": "NO_ROUTE_FOUND"
+                        })
+                else:
+                    # API call failed
+                    error_msg = f"HTTP {response.status_code}"
+                    try:
+                        error_data = response.json()
+                        if "error" in error_data:
+                            error_msg = f"{error_data['error'].get('status', 'UNKNOWN')}: {error_data['error'].get('message', 'Unknown error')}"
+                    except:
+                        error_msg = f"HTTP {response.status_code}: {response.text[:100]}"
+
+                    violations.append({
+                        "day": day.day,
+                        "from_place": current_visit.display_name,
+                        "to_place": next_visit.display_name,
+                        "from_order": current_visit.order,
+                        "expected_time": expected_time,
+                        "actual_time": None,
+                        "deviation": None,
+                        "tolerance": tolerance_minutes,
+                        "issue": f"API call failed: {error_msg}",
+                        "error": "API_ERROR"
+                    })
+
+            except Exception as e:
+                # Unexpected error
+                violations.append({
+                    "day": day.day,
+                    "from_place": current_visit.display_name,
+                    "to_place": next_visit.display_name,
+                    "from_order": current_visit.order,
+                    "expected_time": expected_time,
+                    "actual_time": None,
+                    "deviation": None,
+                    "tolerance": tolerance_minutes,
+                    "issue": f"Unexpected error: {str(e)}",
+                    "error": "EXCEPTION"
+                })
+
+    # Calculate statistics
+    statistics = {
+        "avg_deviation": sum(deviations) / len(deviations) if deviations else 0,
+        "max_deviation": max(deviations) if deviations else 0,
+        "min_deviation": min(deviations) if deviations else 0
+    }
+
+    return {
+        "is_valid": len(violations) == 0,
+        "violations": violations,
+        "total_violations": len(violations),
+        "total_validated": total_validated,
+        "statistics": statistics
     }
