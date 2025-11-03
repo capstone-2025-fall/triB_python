@@ -242,6 +242,68 @@ class ItineraryGeneratorService2:
 - (places에서 선택한 장소 수 / 전체 방문 장소 수) ≥ 70%
 
 ---
+
+## 🟠 Priority 2: 운영시간 및 이동시간 준수 (HIGHLY RECOMMENDED - 90%+)
+
+이 우선순위는 **Priority 1과 충돌하지 않는 한 최대한 준수**해야 합니다.
+
+### 2-A. 운영시간 준수
+
+**필수 사항**:
+- 모든 방문은 운영시간 내에만 이루어져야 합니다
+- arrival ≥ opening_time AND departure ≤ closing_time
+- 휴무일(closed) 방문 절대 금지
+- Google Maps Grounding Tool로 실제 운영시간 확인 필수
+
+**요일별 운영시간 확인**:
+여행 일정의 각 날짜와 요일 정보는 상단의 "여행 기간" 섹션에 명시되어 있습니다.
+- 예: "Day 1: 2025-10-15 (수요일)" → 해당 날짜는 수요일
+- **중요**: Google Maps에서 각 장소의 해당 요일 운영시간을 확인하세요
+  - Day 1이 수요일이면 Wednesday 운영시간 사용
+  - Day 2가 목요일이면 Thursday 운영시간 사용
+- 해당 요일에 휴무(closed)이면 그 날짜에는 절대 방문하지 마세요
+
+**예시**:
+- 박물관이 월요일 휴무 → 월요일에는 일정에 포함하지 않음
+- 테마파크 운영시간 09:00-21:00 → arrival은 09:00 이후, departure는 21:00 이전
+- 레스토랑 영업시간 11:30-22:00 → 점심 방문 시 arrival은 11:30 이후
+
+**Priority 1 충돌 시**:
+- must_visit 우선, 날짜 재조정으로 운영시간 맞춤
+
+### 2-B. 이동시간 정확성 및 Google Maps Grounding Tool 활용
+
+**필수 사항**:
+- Google Maps Grounding Tool을 사용하여 실제 이동시간을 계산하세요
+- 교통수단을 고려하세요 (DRIVE/TRANSIT/WALK/BICYCLE)
+- visit[i+1].arrival = visit[i].departure + visit[i].travel_time
+
+**교통수단 선택** (1-D에서 추론):
+- **DRIVE**: 자동차 경로 기반 이동시간
+- **TRANSIT**: 대중교통 경로 기반 이동시간 (환승 포함) - **기본값**
+- **WALK**: 도보 경로 기반 이동시간
+- **BICYCLE**: 자전거 경로 기반 이동시간
+
+**travel_time 계산 규칙** (매우 중요):
+- **첫 번째 방문의 travel_time**: 첫 번째 장소 → 두 번째 장소 이동시간
+- **중간 방문의 travel_time**: 현재 장소 → 다음 장소 이동시간
+- **마지막 방문의 travel_time**: 0 (다음 장소가 없음)
+
+**계산 공식**:
+```
+next_place.arrival = current_place.departure + travel_time
+```
+
+**예시**:
+- Visit 1 (오사카 성): departure "11:30", travel_time 30분
+- Visit 2 (도톤보리): arrival "12:00" (11:30 + 30분)
+- Visit 2 (도톤보리): departure "14:00", travel_time 0 (마지막 방문)
+
+**검증**:
+- 각 연속된 방문 사이: visit[i+1].arrival = visit[i].departure + visit[i].travel_time
+- 실시간 교통 상황, 대중교통 배차 간격을 고려한 현실적인 이동시간 반영
+
+---
 """
 
         return prompt
