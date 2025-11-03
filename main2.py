@@ -96,5 +96,5 @@ async def generate_itinerary_v2(request: ItineraryRequest2):
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting triB V2 API server on port 8001...")
-    uvicorn.run("main2:app", host="0.0.0.0", port=8001, reload=True)
+    logger.info("Starting triB V2 API server on port 8000...")
+    uvicorn.run("main2:app", host="0.0.0.0", port=8000, reload=True)

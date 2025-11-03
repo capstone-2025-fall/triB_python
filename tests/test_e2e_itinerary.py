@@ -113,7 +113,7 @@ class ItineraryE2ETest:
     """일정 생성 API E2E 테스트"""
 
     def __init__(self):
-        self.api_url = "http://localhost:8000/api/itinerary/generate"
+        self.api_url = "http://localhost:8001/api/itinerary/generate"
         self.validator = GoogleMapsValidator()
         self.test_payload = {
             "places": [
