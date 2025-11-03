@@ -1345,3 +1345,96 @@ def test_validate_rules_with_gemini_multiple_rules():
 
     assert result["total_rules"] == 2
     assert len(result["rule_results"]) == 2
+
+
+# =============================================================================
+# validate_all_with_grounding() Tests
+# =============================================================================
+
+def test_validate_all_with_grounding_empty():
+    """
+    Test validate_all_with_grounding with empty requirements.
+    """
+    from services.validators import validate_all_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_all_with_grounding(itinerary, [], 1, [])
+
+    assert "all_valid" in result
+    assert "must_visit" in result
+    assert "days" in result
+    assert "rules" in result
+    assert "operating_hours" in result
+    assert "travel_time" in result
+
+
+def test_validate_all_with_grounding_structure():
+    """
+    Test that validate_all_with_grounding returns proper structure.
+    """
+    from services.validators import validate_all_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=15
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Bukchon Hanok Village",
+                        name_address="Bukchon Hanok Village, 37 Gyedong-gil, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5825,
+                        longitude=126.9830,
+                        arrival="12:15",
+                        departure="14:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    must_visit = ["Gyeongbokgung Palace"]
+    rules = ["첫날은 경복궁을 방문"]
+
+    result = validate_all_with_grounding(itinerary, must_visit, 1, rules)
+
+    assert isinstance(result["all_valid"], bool)
+    assert result["must_visit"]["is_valid"] is True
+    assert result["days"]["is_valid"] is True

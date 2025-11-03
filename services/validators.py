@@ -791,3 +791,61 @@ def validate_rules_with_gemini(
                 for rule in rules
             ]
         }
+
+
+def validate_all_with_grounding(
+    itinerary: ItineraryResponse2,
+    must_visit: List[str],
+    expected_days: int,
+    rules: List[str]
+) -> Dict[str, Any]:
+    """
+    Run all validators with grounding and aggregate results.
+
+    This function runs all validation checks including grounding-based
+    validators and returns a comprehensive validation report.
+
+    Args:
+        itinerary: The generated itinerary response
+        must_visit: List of place names that must be included
+        expected_days: Expected number of days from the request
+        rules: List of rules that must be followed
+
+    Returns:
+        Dictionary with all validation results:
+        {
+            "all_valid": bool,                      # True if all validations pass
+            "must_visit": {...},                    # Must-visit validation results
+            "days": {...},                          # Days count validation results
+            "rules": {...},                         # Rules validation results (with Gemini)
+            "operating_hours": {...},               # Operating hours validation results (with grounding)
+            "travel_time": {...}                    # Travel time validation results (with grounding)
+        }
+
+    Note:
+        - This function uses grounding-based validators (API calls)
+        - May be slower than validate_all() due to external API calls
+        - Requires valid API keys in settings
+    """
+    must_visit_result = validate_must_visit(itinerary, must_visit)
+    days_result = validate_days_count(itinerary, expected_days)
+    rules_result = validate_rules_with_gemini(itinerary, rules)
+    hours_result = validate_operating_hours_with_grounding(itinerary)
+    travel_time_result = validate_travel_time_with_grounding(itinerary)
+
+    all_valid = (
+        must_visit_result["is_valid"] and
+        days_result["is_valid"] and
+        rules_result["is_valid"] and
+        hours_result["is_valid"] and
+        travel_time_result["is_valid"]
+    )
+
+    return {
+        "all_valid": all_valid,
+        "must_visit": must_visit_result,
+        "days": days_result,
+        "rules": rules_result,
+        "operating_hours": hours_result,
+        "travel_time": travel_time_result
+    }
