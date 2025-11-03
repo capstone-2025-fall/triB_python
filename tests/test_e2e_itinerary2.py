@@ -24,6 +24,7 @@ from services.validators import (
     validate_must_visit,
     validate_days_count,
     validate_operating_hours_basic,
+    validate_travel_time,
     validate_all
 )
 from models.schemas2 import ItineraryResponse2
@@ -697,6 +698,18 @@ async def test_itinerary_generation_v2_e2e():
             print(f"    • Day {v['day']}: {v['place']} ({v['arrival']}-{v['departure']}) - {v['issue']}")
     print(f"  - Status: {'✅ PASS' if hours_validation['is_valid'] else '❌ FAIL'}")
     assert hours_validation["is_valid"], f"Operating hours validation failed: {hours_validation['violations']}"
+
+    # Travel time 검증
+    travel_time_validation = validate_travel_time(itinerary=itinerary_response)
+    print(f"\n✓ Travel time validation:")
+    print(f"  - Total visits checked: {travel_time_validation['total_visits']}")
+    print(f"  - Travel time violations: {travel_time_validation['total_violations']}")
+    if travel_time_validation['violations']:
+        print(f"  - Violations:")
+        for v in travel_time_validation['violations'][:5]:  # Show max 5
+            print(f"    • Day {v['day']}: {v['place']} (order {v['order']}) - {v['issue']}")
+    print(f"  - Status: {'✅ PASS' if travel_time_validation['is_valid'] else '❌ FAIL'}")
+    assert travel_time_validation["is_valid"], f"Travel time validation failed: {travel_time_validation['violations']}"
 
     # 전체 검증 (validate_all)
     all_validations = validate_all(

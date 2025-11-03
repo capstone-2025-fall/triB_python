@@ -12,6 +12,7 @@ from services.validators import (
     validate_must_visit,
     validate_days_count,
     validate_operating_hours_basic,
+    validate_travel_time,
     validate_all
 )
 
@@ -49,7 +50,7 @@ def sample_itinerary():
                 longitude=127.0,
                 arrival="09:00",
                 departure="11:00",
-                travel_time=0
+                travel_time=60  # Non-last visit: travel_time > 0
             ),
             Visit2(
                 order=2,
@@ -60,7 +61,7 @@ def sample_itinerary():
                 longitude=127.1,
                 arrival="12:00",
                 departure="13:30",
-                travel_time=30
+                travel_time=0  # Last visit: travel_time = 0
             )
         ]
     )
@@ -77,7 +78,7 @@ def sample_itinerary():
                 longitude=127.2,
                 arrival="10:00",
                 departure="12:00",
-                travel_time=0
+                travel_time=0  # Only visit: travel_time = 0
             )
         ]
     )
@@ -384,6 +385,268 @@ def test_validate_operating_hours_basic_empty_itinerary():
     assert result["total_visits"] == 0
 
 
+# Tests for validate_travel_time()
+
+def test_validate_travel_time_all_correct():
+    """Test with correct travel_time values (last=0, others>0)."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place 1",
+                        name_address="Addr 1",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5,
+                        longitude=127.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=30  # Non-last visit with travel_time > 0
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place 2",
+                        name_address="Addr 2",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.6,
+                        longitude=127.1,
+                        arrival="11:30",
+                        departure="13:00",
+                        travel_time=0  # Last visit with travel_time = 0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_travel_time(itinerary)
+
+    assert result["is_valid"] is True
+    assert len(result["violations"]) == 0
+    assert result["total_violations"] == 0
+    assert result["total_visits"] == 2
+
+
+def test_validate_travel_time_last_visit_nonzero():
+    """Test when last visit has travel_time != 0 (violation)."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place 1",
+                        name_address="Addr 1",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5,
+                        longitude=127.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=30  # Last visit but travel_time != 0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_travel_time(itinerary)
+
+    assert result["is_valid"] is False
+    assert result["total_violations"] == 1
+    assert len(result["violations"]) == 1
+    assert result["violations"][0]["place"] == "Place 1"
+    assert result["violations"][0]["travel_time"] == 30
+    assert "Last visit must have travel_time=0" in result["violations"][0]["issue"]
+
+
+def test_validate_travel_time_middle_visit_zero():
+    """Test when non-last visit has travel_time = 0 (suspicious)."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place 1",
+                        name_address="Addr 1",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5,
+                        longitude=127.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=0  # Non-last visit with travel_time = 0
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place 2",
+                        name_address="Addr 2",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.6,
+                        longitude=127.1,
+                        arrival="11:00",
+                        departure="13:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_travel_time(itinerary)
+
+    assert result["is_valid"] is False
+    assert result["total_violations"] == 1  # Only first visit is suspicious
+    assert result["violations"][0]["place"] == "Place 1"
+    assert "Non-last visit has travel_time=0" in result["violations"][0]["issue"]
+
+
+def test_validate_travel_time_multiple_days():
+    """Test validation across multiple days."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Day1 Place1",
+                        name_address="Addr",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5,
+                        longitude=127.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=20
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Day1 Place2",
+                        name_address="Addr",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.6,
+                        longitude=127.1,
+                        arrival="11:20",
+                        departure="13:00",
+                        travel_time=0  # Correct: last visit of day 1
+                    )
+                ]
+            ),
+            DayItinerary2(
+                day=2,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Day2 Place1",
+                        name_address="Addr",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.7,
+                        longitude=127.2,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=0  # Correct: only visit of day 2
+                    )
+                ]
+            )
+        ],
+        budget=200000
+    )
+
+    result = validate_travel_time(itinerary)
+
+    assert result["is_valid"] is True
+    assert result["total_violations"] == 0
+    assert result["total_visits"] == 3
+
+
+def test_validate_travel_time_multiple_violations():
+    """Test with multiple travel_time violations."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place 1",
+                        name_address="Addr",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5,
+                        longitude=127.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=0  # Violation: non-last with 0
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place 2",
+                        name_address="Addr",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.6,
+                        longitude=127.1,
+                        arrival="11:00",
+                        departure="13:00",
+                        travel_time=30  # Violation: last with non-zero
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_travel_time(itinerary)
+
+    assert result["is_valid"] is False
+    assert result["total_violations"] == 2
+    assert len(result["violations"]) == 2
+
+
+def test_validate_travel_time_empty_itinerary():
+    """Test with empty itinerary."""
+    empty_itinerary = ItineraryResponse2(itinerary=[], budget=0)
+    result = validate_travel_time(empty_itinerary)
+
+    assert result["is_valid"] is True
+    assert result["total_visits"] == 0
+    assert len(result["violations"]) == 0
+
+
+def test_validate_travel_time_single_visit():
+    """Test with single visit (should have travel_time=0)."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Only Place",
+                        name_address="Addr",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5,
+                        longitude=127.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=0  # Correct: single visit = last visit
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_travel_time(itinerary)
+
+    assert result["is_valid"] is True
+    assert result["total_visits"] == 1
+
+
 # Tests for validate_all()
 
 def test_validate_all_everything_passes(sample_itinerary):
@@ -397,6 +660,7 @@ def test_validate_all_everything_passes(sample_itinerary):
     assert result["must_visit"]["is_valid"] is True
     assert result["days"]["is_valid"] is True
     assert result["operating_hours"]["is_valid"] is True
+    assert result["travel_time"]["is_valid"] is True
 
 
 def test_validate_all_must_visit_fails(sample_itinerary):
@@ -410,6 +674,7 @@ def test_validate_all_must_visit_fails(sample_itinerary):
     assert result["must_visit"]["is_valid"] is False
     assert result["days"]["is_valid"] is True
     assert result["operating_hours"]["is_valid"] is True
+    assert result["travel_time"]["is_valid"] is True
 
 
 def test_validate_all_days_fails(sample_itinerary):
@@ -423,6 +688,7 @@ def test_validate_all_days_fails(sample_itinerary):
     assert result["must_visit"]["is_valid"] is True
     assert result["days"]["is_valid"] is False
     assert result["operating_hours"]["is_valid"] is True
+    assert result["travel_time"]["is_valid"] is True
 
 
 def test_validate_all_multiple_failures():
@@ -459,6 +725,7 @@ def test_validate_all_multiple_failures():
     assert result["must_visit"]["is_valid"] is False
     assert result["days"]["is_valid"] is False
     assert result["operating_hours"]["is_valid"] is False
+    assert result["travel_time"]["is_valid"] is True  # Single visit with travel_time=0 is correct
 
 
 def test_validate_all_empty_requirements(sample_itinerary):
@@ -466,3 +733,36 @@ def test_validate_all_empty_requirements(sample_itinerary):
     result = validate_all(sample_itinerary, [], 2)
 
     assert result["all_valid"] is True
+
+
+def test_validate_all_travel_time_fails():
+    """Test when only travel_time validation fails."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place 1",
+                        name_address="Addr 1",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5,
+                        longitude=127.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=30  # Last visit but travel_time != 0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_all(itinerary, [], 1)
+
+    assert result["all_valid"] is False
+    assert result["must_visit"]["is_valid"] is True
+    assert result["days"]["is_valid"] is True
+    assert result["operating_hours"]["is_valid"] is True
+    assert result["travel_time"]["is_valid"] is False

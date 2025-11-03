@@ -200,6 +200,67 @@ def validate_operating_hours_basic(itinerary: ItineraryResponse2) -> Dict[str, A
     }
 
 
+def validate_travel_time(itinerary: ItineraryResponse2) -> Dict[str, Any]:
+    """
+    Validate travel_time field correctness in the itinerary.
+
+    Checks:
+    1. Last visit of each day must have travel_time = 0 (no next place)
+    2. Non-last visits should have travel_time >= 0 (preferably > 0)
+
+    Args:
+        itinerary: The generated itinerary response
+
+    Returns:
+        Dictionary with validation results:
+        {
+            "is_valid": bool,                    # True if all checks pass
+            "violations": List[Dict],            # List of travel_time violations
+            "total_violations": int,             # Number of violations found
+            "total_visits": int                  # Total number of visits checked
+        }
+    """
+    violations = []
+    total_visits = 0
+
+    for day in itinerary.itinerary:
+        visits = day.visits
+        if len(visits) == 0:
+            continue
+
+        for i, visit in enumerate(visits):
+            total_visits += 1
+            is_last_visit = (i == len(visits) - 1)
+
+            if is_last_visit:
+                # Last visit must have travel_time = 0
+                if visit.travel_time != 0:
+                    violations.append({
+                        "day": day.day,
+                        "place": visit.display_name,
+                        "order": visit.order,
+                        "travel_time": visit.travel_time,
+                        "issue": f"Last visit must have travel_time=0, but got {visit.travel_time}"
+                    })
+            else:
+                # Non-last visits: travel_time = 0 is suspicious (but not strictly invalid)
+                if visit.travel_time == 0:
+                    violations.append({
+                        "day": day.day,
+                        "place": visit.display_name,
+                        "order": visit.order,
+                        "travel_time": visit.travel_time,
+                        "issue": f"Non-last visit has travel_time=0 (suspicious, should be > 0)"
+                    })
+
+    return {
+        "is_valid": len(violations) == 0,
+        "violations": violations,
+        "total_violations": len(violations),
+        "total_visits": total_visits
+    }
+
+
 def validate_all(
     itinerary: ItineraryResponse2,
     must_visit: List[str],
@@ -222,22 +283,26 @@ def validate_all(
             "all_valid": bool,                  # True if all validations pass
             "must_visit": {...},                # Must-visit validation results
             "days": {...},                      # Days count validation results
-            "operating_hours": {...}            # Operating hours validation results
+            "operating_hours": {...},           # Operating hours validation results
+            "travel_time": {...}                # Travel time validation results
         }
     """
     must_visit_result = validate_must_visit(itinerary, must_visit)
     days_result = validate_days_count(itinerary, expected_days)
     hours_result = validate_operating_hours_basic(itinerary)
+    travel_time_result = validate_travel_time(itinerary)
 
     all_valid = (
         must_visit_result["is_valid"] and
         days_result["is_valid"] and
-        hours_result["is_valid"]
+        hours_result["is_valid"] and
+        travel_time_result["is_valid"]
     )
 
     return {
         "all_valid": all_valid,
         "must_visit": must_visit_result,
         "days": days_result,
-        "operating_hours": hours_result
+        "operating_hours": hours_result,
+        "travel_time": travel_time_result
     }
