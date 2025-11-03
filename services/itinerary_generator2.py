@@ -496,6 +496,99 @@ next_place.arrival = current_place.departure + travel_time
 - 일정 포함: Day 1-3 모두 첫/마지막 visit으로 해당 숙소 포함
 
 ---
+
+## Google Maps Grounding 활용 가이드
+
+### 필수 정보 조회
+
+Google Maps Grounding Tool을 사용하여 다음 정보를 **반드시** 조회하세요:
+
+**1. 정확한 좌표 (latitude, longitude)**:
+- 소수점 6자리까지 정확한 좌표 사용
+- 예: latitude: 34.687315, longitude: 135.526199
+- 모든 장소에 대해 필수
+
+**2. 상세 주소 (name_address 필드)**:
+- 형식: "장소명 + 한칸 공백 + 상세 주소"
+- 예: "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본"
+- 예: "유니버설 스튜디오 재팬 2 Chome-1-33 Sakurajima, Konohana Ward, Osaka, 554-0031 일본"
+- **중요**: 장소명과 주소 사이에 한칸 공백 필수
+
+**3. 운영시간 (opening hours)**:
+- 각 장소의 요일별 운영시간 확인
+- 휴무일(closed) 반드시 확인
+- 예: Monday: 09:00-17:00, Tuesday: Closed
+- 해당 요일에 휴무이면 그 날짜에 방문하지 말 것
+
+**4. 이동시간 (travel time)**:
+- 실제 도로/대중교통 기반 이동시간 계산
+- 교통수단(DRIVE/TRANSIT/WALK/BICYCLE)에 따라 다름
+- 예: A 장소 → B 장소 (TRANSIT, 30분)
+- 실시간 교통 상황, 대중교통 배차 간격 고려
+
+### 교통수단 매핑
+
+1-D에서 추론한 이동 수단을 Google Maps 교통수단으로 매핑하세요:
+
+**DRIVE** (자동차):
+- chat에서 "렌터카", "자동차", "차 빌려서" 언급 시
+- 자동차 경로 기반 이동시간 계산
+- 주차 시간 추가 고려 (5-10분)
+
+**TRANSIT** (대중교통) - **기본값**:
+- chat에서 "대중교통", "버스", "지하철" 언급 시
+- 또는 이동 수단 언급이 없을 경우
+- 대중교통 경로 기반 이동시간 계산 (환승 포함)
+- 배차 간격, 도보 이동 시간 포함
+
+**WALK** (도보):
+- chat에서 "걷기", "도보", "산책" 언급 시
+- 도보 경로 기반 이동시간 계산
+- 경사, 횡단보도 등 고려
+
+**BICYCLE** (자전거):
+- chat에서 "자전거" 언급 시
+- 자전거 경로 기반 이동시간 계산
+
+### Google Maps 사용 예시
+
+**장소 정보 조회**:
+```
+Query: "오사카 성"
+Result:
+- display_name: "오사카 성"
+- name_address: "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본"
+- latitude: 34.687315
+- longitude: 135.526199
+- opening_hours:
+  - Monday: 09:00-17:00
+  - Tuesday: 09:00-17:00
+  - Wednesday: 09:00-17:00
+  - ...
+```
+
+**이동시간 계산**:
+```
+From: 오사카 성 (34.687315, 135.526199)
+To: 도톤보리 (34.668736, 135.501297)
+Mode: TRANSIT
+Result: 30분 (지하철 + 도보)
+```
+
+**숙소 검색**:
+```
+Query: "Namba Osaka hotel"
+Filter: rating >= 4.0, type = lodging
+Result:
+- display_name: "크로스 호텔 오사카"
+- name_address: "크로스 호텔 오사카 2-5-15 Shinsaibashi-suji, Chuo Ward, Osaka, 542-0085 일본"
+- latitude: 34.672042
+- longitude: 135.502014
+- rating: 4.2
+- user_ratings_total: 1523
+```
+
+---
 """
 
         return prompt
