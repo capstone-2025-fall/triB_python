@@ -6,6 +6,7 @@ from google import genai
 from google.genai import types
 from config import settings
 from models.schemas2 import ItineraryRequest2, ItineraryResponse2, PlaceWithTag, PlaceTag
+from services.validators import validate_all
 
 logger = logging.getLogger(__name__)
 
@@ -559,116 +560,245 @@ next_place.arrival = current_place.departure + travel_time
         logger.warning(f"Location not found in map, using default (0.0, 0.0): {country}")
         return {"latitude": 0.0, "longitude": 0.0}
 
+    def _validate_response(
+        self,
+        itinerary: ItineraryResponse2,
+        request: ItineraryRequest2
+    ) -> Dict:
+        """
+        생성된 일정이 사용자 요구사항을 준수하는지 검증
+
+        Args:
+            itinerary: 생성된 일정
+            request: 원본 요청 (must_visit, days 등 포함)
+
+        Returns:
+            검증 결과 딕셔너리:
+            {
+                "all_valid": bool,
+                "must_visit": {...},
+                "days": {...},
+                "operating_hours": {...}
+            }
+        """
+        must_visit_list = request.must_visit if request.must_visit else []
+
+        # validators.validate_all() 호출
+        validation_results = validate_all(
+            itinerary=itinerary,
+            must_visit=must_visit_list,
+            expected_days=request.days
+        )
+
+        return validation_results
+
+    def _enhance_prompt_with_violations(
+        self,
+        request: ItineraryRequest2,
+        validation_results: Dict
+    ) -> ItineraryRequest2:
+        """
+        검증 실패 사항을 프롬프트에 추가하여 재시도용 요청 생성
+
+        Args:
+            request: 원본 요청
+            validation_results: 검증 결과 (_validate_response 반환값)
+
+        Returns:
+            검증 피드백이 추가된 새로운 요청 객체
+        """
+        feedback = ["⚠️ 이전 시도에서 다음 문제가 발생했습니다. 반드시 수정해주세요:"]
+
+        # Must-visit 위반
+        if not validation_results.get("must_visit", {}).get("is_valid", True):
+            missing = validation_results["must_visit"].get("missing", [])
+            if missing:
+                feedback.append(
+                    f"🔴 누락된 must_visit 장소: {', '.join(missing)} "
+                    f"→ 이 장소들을 반드시 일정에 포함시켜야 합니다!"
+                )
+
+        # Days 위반
+        if not validation_results.get("days", {}).get("is_valid", True):
+            actual = validation_results["days"].get("actual", 0)
+            expected = validation_results["days"].get("expected", 0)
+            feedback.append(
+                f"🔴 일수 불일치: {actual}일 생성됨 (예상: {expected}일) "
+                f"→ 정확히 {expected}개의 day를 생성해야 합니다!"
+            )
+
+        # Operating hours 위반
+        if not validation_results.get("operating_hours", {}).get("is_valid", True):
+            violations = validation_results["operating_hours"].get("violations", [])
+            if violations:
+                violation_details = []
+                for v in violations[:3]:  # 최대 3개만 표시
+                    violation_details.append(
+                        f"Day {v['day']}: {v['place']} ({v['arrival']}-{v['departure']})"
+                    )
+                feedback.append(
+                    f"🔴 비정상 방문시간 (새벽 2-5시): {', '.join(violation_details)} "
+                    f"→ 일반적인 운영시간(오전 9시~저녁 10시)에 방문하도록 조정하세요!"
+                )
+
+        # 기존 chat에 피드백 추가하여 새 요청 생성
+        # Pydantic 모델은 불변이므로 model_copy 사용
+        enhanced_chat = feedback + request.chat
+
+        enhanced_request = request.model_copy(update={"chat": enhanced_chat})
+
+        logger.info(f"Enhanced prompt with {len(feedback)} violation feedback messages")
+
+        return enhanced_request
+
     async def generate_itinerary(
         self,
         request: ItineraryRequest2,
+        max_retries: int = 2
     ) -> ItineraryResponse2:
         """
-        V2 일정 생성 메인 함수
+        V2 일정 생성 메인 함수 (재시도 로직 포함)
 
         Args:
             request: 일정 생성 요청 (장소, 채팅 내용 등 포함)
+            max_retries: 최대 재시도 횟수 (기본값: 2, 즉 총 3번 시도)
 
         Returns:
             ItineraryResponse2: 생성된 여행 일정
 
         Raises:
+            ValueError: 최대 재시도 횟수 초과 시 검증 실패 상세 정보와 함께 발생
             Exception: Gemini API 호출 실패 또는 JSON 파싱 실패 시
 
         Note:
-            V1과 달리 DB 조회, 클러스터링, 이동시간 매트릭스 계산 없음
-            모든 로직을 Gemini에게 위임
+            - V1과 달리 DB 조회, 클러스터링, 이동시간 매트릭스 계산 없음
+            - 모든 로직을 Gemini에게 위임
+            - 검증 실패 시 위반 사항을 프롬프트에 추가하여 재시도
         """
-        try:
-            # 프롬프트 생성
-            prompt = self._create_prompt_v2(request)
+        # 위치 기준점 추론 (재시도 시 재사용)
+        center_coords = self._infer_location_from_country(request.country)
 
-            # 위치 기준점 추론
-            center_coords = self._infer_location_from_country(request.country)
+        logger.info(
+            f"Generating V2 itinerary: {len(request.places)} places, "
+            f"{request.days} days, {len(request.chat)} chat messages, "
+            f"{request.members} members, country: {request.country}"
+        )
+        logger.info(f"Location center: ({center_coords['latitude']}, {center_coords['longitude']})")
 
-            logger.info(
-                f"Generating V2 itinerary: {len(request.places)} places, "
-                f"{request.days} days, {len(request.chat)} chat messages, "
-                f"{request.members} members, country: {request.country}"
-            )
-            logger.info(f"Location center: ({center_coords['latitude']}, {center_coords['longitude']})")
-            logger.debug(f"Prompt length: {len(prompt)} characters")
+        # 재시도 루프
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info(f"Attempt {attempt + 1}/{max_retries + 1}: Generating itinerary...")
 
-            # Gemini API 호출 (Google Maps Grounding 활성화)
-            logger.info("Calling Gemini API with Google Maps grounding...")
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.7,
-                    # Note: response_mime_type="application/json" is not supported with Google Maps tool
-                    tools=[
-                        types.Tool(google_maps=types.GoogleMaps())  # ✅ Google Maps Grounding Tool
-                    ],
-                    tool_config=types.ToolConfig(
-                        retrieval_config=types.RetrievalConfig(
-                            lat_lng=types.LatLng(
-                                latitude=center_coords["latitude"],
-                                longitude=center_coords["longitude"]
+                # 프롬프트 생성 (재시도 시 업데이트된 request 사용)
+                prompt = self._create_prompt_v2(request)
+                logger.debug(f"Prompt length: {len(prompt)} characters")
+
+                # Gemini API 호출 (Google Maps Grounding 활성화)
+                logger.info("Calling Gemini API with Google Maps grounding...")
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.7,
+                        # Note: response_mime_type="application/json" is not supported with Google Maps tool
+                        tools=[
+                            types.Tool(google_maps=types.GoogleMaps())  # ✅ Google Maps Grounding Tool
+                        ],
+                        tool_config=types.ToolConfig(
+                            retrieval_config=types.RetrievalConfig(
+                                lat_lng=types.LatLng(
+                                    latitude=center_coords["latitude"],
+                                    longitude=center_coords["longitude"]
+                                )
                             )
                         )
+                    ),
+                )
+
+                # 응답 텍스트 추출
+                response_text = response.text
+                logger.info(f"Received response: {len(response_text)} characters")
+                logger.debug(f"Response preview: {response_text[:200]}...")
+
+                # 마크다운 코드 블록 제거 (Google Maps tool 사용 시 response_mime_type 미지원)
+                if response_text.startswith("```json"):
+                    response_text = response_text.replace("```json\n", "").replace("```", "").strip()
+                    logger.info("Removed markdown code block from response")
+                elif response_text.startswith("```"):
+                    response_text = response_text.replace("```\n", "").replace("```", "").strip()
+                    logger.info("Removed markdown code block from response")
+
+                # JSON 파싱
+                try:
+                    itinerary_data = json.loads(response_text)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON parse error: {str(e)}")
+                    logger.error(f"Full response text:\n{response_text}")
+
+                    # 에러 위치 주변 텍스트 표시 (디버깅용)
+                    error_pos = e.pos
+                    start = max(0, error_pos - 100)
+                    end = min(len(response_text), error_pos + 100)
+                    logger.error(f"Error context (pos {error_pos}):\n...{response_text[start:end]}...")
+
+                    raise Exception(f"Gemini returned invalid JSON: {str(e)}")
+
+                # Pydantic 검증
+                try:
+                    itinerary_response = ItineraryResponse2(**itinerary_data)
+                except Exception as e:
+                    logger.error(f"Pydantic validation error: {str(e)}")
+                    logger.error(f"Data: {json.dumps(itinerary_data, indent=2, ensure_ascii=False)}")
+                    raise Exception(f"Invalid itinerary format: {str(e)}")
+
+                # 사후 검증 (must_visit, days, operating_hours)
+                validation_results = self._validate_response(itinerary_response, request)
+
+                if validation_results["all_valid"]:
+                    # 성공 로그
+                    total_visits = sum(len(day.visits) for day in itinerary_response.itinerary)
+                    logger.info(
+                        f"✅ Successfully generated V2 itinerary (attempt {attempt + 1}): "
+                        f"{len(itinerary_response.itinerary)} days, {total_visits} total visits"
                     )
-                ),
-            )
 
-            # 응답 텍스트 추출
-            response_text = response.text
-            logger.info(f"Received response: {len(response_text)} characters")
-            logger.debug(f"Response preview: {response_text[:200]}...")
+                    # 각 일차별 요약 로그
+                    for day in itinerary_response.itinerary:
+                        visit_names = [v.display_name for v in day.visits]
+                        logger.info(f"  Day {day.day}: {len(day.visits)} visits - {', '.join(visit_names)}")
 
-            # 마크다운 코드 블록 제거 (Google Maps tool 사용 시 response_mime_type 미지원)
-            if response_text.startswith("```json"):
-                response_text = response_text.replace("```json\n", "").replace("```", "").strip()
-                logger.info("Removed markdown code block from response")
-            elif response_text.startswith("```"):
-                response_text = response_text.replace("```\n", "").replace("```", "").strip()
-                logger.info("Removed markdown code block from response")
+                    return itinerary_response
+                else:
+                    # 검증 실패
+                    logger.warning(
+                        f"⚠️ Validation failed (attempt {attempt + 1}/{max_retries + 1}): "
+                        f"{json.dumps(validation_results, ensure_ascii=False)}"
+                    )
 
-            # JSON 파싱
-            try:
-                itinerary_data = json.loads(response_text)
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parse error: {str(e)}")
-                logger.error(f"Full response text:\n{response_text}")
+                    # 재시도 가능 여부 확인
+                    if attempt < max_retries:
+                        logger.info(f"Retrying with enhanced prompt...")
+                        # 위반 사항을 프롬프트에 추가하여 재시도
+                        request = self._enhance_prompt_with_violations(request, validation_results)
+                    else:
+                        # 최대 재시도 횟수 초과
+                        logger.error(
+                            f"❌ Maximum retries ({max_retries}) exceeded. "
+                            f"Final validation results: {json.dumps(validation_results, indent=2, ensure_ascii=False)}"
+                        )
+                        raise ValueError(
+                            f"일정 생성 검증 실패 (최대 재시도 {max_retries}회 초과): "
+                            f"{json.dumps(validation_results, ensure_ascii=False)}"
+                        )
 
-                # 에러 위치 주변 텍스트 표시 (디버깅용)
-                error_pos = e.pos
-                start = max(0, error_pos - 100)
-                end = min(len(response_text), error_pos + 100)
-                logger.error(f"Error context (pos {error_pos}):\n...{response_text[start:end]}...")
-
-                raise Exception(f"Gemini returned invalid JSON: {str(e)}")
-
-            # Pydantic 검증
-            try:
-                itinerary_response = ItineraryResponse2(**itinerary_data)
+            except ValueError:
+                # 검증 실패 예외는 그대로 전달
+                raise
             except Exception as e:
-                logger.error(f"Pydantic validation error: {str(e)}")
-                logger.error(f"Data: {json.dumps(itinerary_data, indent=2, ensure_ascii=False)}")
-                raise Exception(f"Invalid itinerary format: {str(e)}")
-
-            # 성공 로그
-            total_visits = sum(len(day.visits) for day in itinerary_response.itinerary)
-            logger.info(
-                f"Successfully generated V2 itinerary: "
-                f"{len(itinerary_response.itinerary)} days, {total_visits} total visits"
-            )
-
-            # 각 일차별 요약 로그
-            for day in itinerary_response.itinerary:
-                visit_names = [v.display_name for v in day.visits]
-                logger.info(f"  Day {day.day}: {len(day.visits)} visits - {', '.join(visit_names)}")
-
-            return itinerary_response
-
-        except Exception as e:
-            logger.error(f"V2 itinerary generation failed: {str(e)}", exc_info=True)
-            raise
+                logger.error(f"V2 itinerary generation failed (attempt {attempt + 1}): {str(e)}", exc_info=True)
+                # API/JSON 에러는 재시도하지 않고 즉시 실패
+                raise
 
 
 # 싱글톤 인스턴스

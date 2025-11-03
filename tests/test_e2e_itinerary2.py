@@ -20,6 +20,13 @@ from config import settings
 import json
 from datetime import datetime
 from pathlib import Path
+from services.validators import (
+    validate_must_visit,
+    validate_days_count,
+    validate_operating_hours_basic,
+    validate_all
+)
+from models.schemas2 import ItineraryResponse2
 
 
 def validate_rule_compliance_with_gemini(itinerary_data: dict, rules: list[str]) -> dict:
@@ -273,7 +280,8 @@ def generate_test_report(
     itinerary_data: dict,
     request_data: dict,
     rule_validation: dict,
-    travel_time_validation: dict
+    travel_time_validation: dict,
+    validation_results: dict = None
 ) -> str:
     """
     E2E 테스트 결과를 마크다운 보고서로 생성
@@ -285,6 +293,7 @@ def generate_test_report(
         request_data: 요청 데이터
         rule_validation: 규칙 준수 검증 결과
         travel_time_validation: 이동시간 검증 결과
+        validation_results: 검증 유틸리티 결과 (validate_all 반환값)
 
     Returns:
         마크다운 형식의 보고서 문자열
@@ -326,6 +335,72 @@ Generated: {timestamp}
             report += f"   - Time: {visit['arrival']} - {visit['departure']}\n"
             report += f"   - Location: ({visit['latitude']:.6f}, {visit['longitude']:.6f})\n"
             report += f"   - Travel to next: {visit['travel_time']} minutes\n\n"
+
+    # 검증 유틸리티 결과 섹션 (PR #3에서 추가)
+    if validation_results:
+        report += f"""---
+
+## Requirements Compliance Validation
+
+"""
+        # Must-visit 검증
+        mv = validation_results.get('must_visit', {})
+        mv_status = "✅ PASSED" if mv.get('is_valid', False) else "❌ FAILED"
+        report += f"""### Must-Visit Places
+
+- **Required**: {mv.get('total_required', 0)} places
+- **Found**: {mv.get('total_found', 0)} places
+- **Missing**: {mv.get('missing', [])}
+- **Status**: {mv_status}
+
+"""
+        if mv.get('found'):
+            report += "**Found places:**\n"
+            for place in mv['found']:
+                report += f"- ✅ {place}\n"
+            report += "\n"
+
+        if mv.get('missing'):
+            report += "**Missing places:**\n"
+            for place in mv['missing']:
+                report += f"- ❌ {place}\n"
+            report += "\n"
+
+        # Days count 검증
+        days = validation_results.get('days', {})
+        days_status = "✅ PASSED" if days.get('is_valid', False) else "❌ FAILED"
+        report += f"""### Days Count
+
+- **Expected**: {days.get('expected', 0)} days
+- **Actual**: {days.get('actual', 0)} days
+- **Difference**: {days.get('difference', 0)} days
+- **Status**: {days_status}
+
+"""
+
+        # Operating hours 검증
+        hours = validation_results.get('operating_hours', {})
+        hours_status = "✅ PASSED" if hours.get('is_valid', False) else "⚠️ WARNINGS"
+        report += f"""### Operating Hours Basic Check
+
+- **Total visits checked**: {hours.get('total_visits', 0)}
+- **Unusual time violations**: {hours.get('total_violations', 0)}
+- **Status**: {hours_status}
+
+"""
+        if hours.get('violations'):
+            report += "**Violations (unusual hours 2:00-5:00 AM):**\n"
+            for v in hours['violations'][:10]:  # Show max 10
+                report += f"- ⚠️ Day {v['day']}: {v['place']} ({v['arrival']}-{v['departure']}) - {v['issue']}\n"
+            report += "\n"
+
+        # Overall validation
+        overall_status = "✅ ALL PASSED" if validation_results.get('all_valid', False) else "❌ SOME FAILED"
+        report += f"""### Overall Validation
+
+**Result**: {overall_status}
+
+"""
 
     # 규칙 준수 검증 섹션
     rules_passed = sum(1 for r in rule_validation['rule_results'] if r['followed'])
@@ -579,6 +654,59 @@ async def test_itinerary_generation_v2_e2e():
     for must_visit in must_visit_places:
         print(f"  - {must_visit}")
 
+    # 5.5. 검증 유틸리티 함수로 상세 검증
+    print(f"\n" + "=" * 60)
+    print(f"Validation Utilities Check")
+    print(f"=" * 60)
+
+    # ItineraryResponse2 객체로 변환
+    itinerary_response = ItineraryResponse2(**data)
+
+    # Must-visit 검증
+    must_visit_validation = validate_must_visit(
+        itinerary=itinerary_response,
+        must_visit=must_visit_places
+    )
+    print(f"\n✓ Must-visit validation:")
+    print(f"  - Required: {must_visit_validation['total_required']}")
+    print(f"  - Found: {must_visit_validation['total_found']}")
+    print(f"  - Missing: {must_visit_validation['missing']}")
+    print(f"  - Status: {'✅ PASS' if must_visit_validation['is_valid'] else '❌ FAIL'}")
+    assert must_visit_validation["is_valid"], f"Must-visit validation failed: {must_visit_validation['missing']}"
+
+    # Days count 검증
+    days_validation = validate_days_count(
+        itinerary=itinerary_response,
+        expected_days=request_data["days"]
+    )
+    print(f"\n✓ Days count validation:")
+    print(f"  - Expected: {days_validation['expected']}")
+    print(f"  - Actual: {days_validation['actual']}")
+    print(f"  - Difference: {days_validation['difference']}")
+    print(f"  - Status: {'✅ PASS' if days_validation['is_valid'] else '❌ FAIL'}")
+    assert days_validation["is_valid"], f"Days count validation failed: {days_validation}"
+
+    # Operating hours 기본 검증
+    hours_validation = validate_operating_hours_basic(itinerary=itinerary_response)
+    print(f"\n✓ Operating hours basic validation:")
+    print(f"  - Total visits checked: {hours_validation['total_visits']}")
+    print(f"  - Unusual time violations: {hours_validation['total_violations']}")
+    if hours_validation['violations']:
+        print(f"  - Violations:")
+        for v in hours_validation['violations'][:5]:  # Show max 5
+            print(f"    • Day {v['day']}: {v['place']} ({v['arrival']}-{v['departure']}) - {v['issue']}")
+    print(f"  - Status: {'✅ PASS' if hours_validation['is_valid'] else '❌ FAIL'}")
+    assert hours_validation["is_valid"], f"Operating hours validation failed: {hours_validation['violations']}"
+
+    # 전체 검증 (validate_all)
+    all_validations = validate_all(
+        itinerary=itinerary_response,
+        must_visit=must_visit_places,
+        expected_days=request_data["days"]
+    )
+    print(f"\n✓ Overall validation result: {'✅ ALL PASS' if all_validations['all_valid'] else '❌ SOME FAILED'}")
+    assert all_validations["all_valid"], f"Overall validation failed: {json.dumps(all_validations, indent=2)}"
+
     # 6. 전체 방문지 수 출력
     total_visits = sum(len(day["visits"]) for day in data["itinerary"])
     print(f"\n✓ Total visits: {total_visits}")
@@ -724,7 +852,8 @@ async def test_itinerary_generation_v2_e2e():
         itinerary_data=data,
         request_data=request_data,
         rule_validation=rule_validation,
-        travel_time_validation=travel_time_validation
+        travel_time_validation=travel_time_validation,
+        validation_results=all_validations  # PR #3: Include validation results
     )
 
     # 보고서 저장
