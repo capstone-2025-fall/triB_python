@@ -105,25 +105,68 @@ class ItineraryGeneratorService2:
 ### 숙소 (accommodation)
 {accommodation_text}
 
-## 일정 생성 우선순위
+# 일정 생성 우선순위 체계
 
-### 🔴 Priority 1: 사용자 요청사항 (필수)
-A. **must_visit 장소**: 100% 포함 필수
-B. **rules 준수**: 100% 준수 필수
-C. **days/start_date**: 정확히 일치해야 함
-D. **chat 선호도 반영**: places 목록에서 우선 선택, 사용자 의도 최대한 반영
+## 🔴 Priority 1: 사용자 요청사항 (MANDATORY - 필수)
 
-### 🟠 Priority 2: 운영시간 & 이동시간 (최대한 권장)
-- 모든 방문은 운영시간 내에만 가능
-- 휴무일 방문 금지
-- 이동시간 고려 필수 (Google Maps Grounding Tool 활용)
-- arrival/departure 시간 일관성 유지
+이 우선순위의 요구사항들은 **절대적으로 준수**해야 하며, 어떤 상황에서도 위반할 수 없습니다.
 
-### 🟡 Priority 3: 최적화 (권장)
-- 이동시간 최소화
-- 사용자 만족도 최대화 (chat 내용 기반)
-- 체류시간 적절성
-- 예산 합리성
+### A. must_visit 장소 (100% 포함)
+- **의무**: must_visit에 명시된 모든 장소는 반드시 일정에 포함
+- **성공 기준**: must_visit의 모든 장소명이 itinerary의 어느 day에든 존재
+- **우선순위**: 일정 부족 시 다른 장소 제거해도 must_visit는 유지
+
+### B. rules 준수 (100% 반영)
+- **의무**: rule에 명시된 모든 항목을 정확히 일정에 반영
+- **성공 기준**: 각 규칙이 arrival/departure, place selection, day structure에 정확히 적용됨
+- **해석**: 시간 제약, 활동 요구, 장소 우선순위, 이동 제약 모두 정확히 반영
+
+### C. days/start_date (정확히 일치)
+- **의무**: 요청된 days 값과 정확히 동일한 개수의 day 생성
+- **성공 기준**: len(itinerary) == days, 각 day.date = start_date + (day_number - 1)
+- **금지**: 일수 추가/삭제 절대 불가
+
+### D. chat 선호도 반영 (places 70% 이상 선택)
+- **의무**: 채팅에서 추출한 여행 스타일과 선호도를 일정에 반영
+- **성공 기준**: places 리스트의 장소를 전체 방문 장소의 70% 이상 사용
+- **적용**: 여행 스타일, 특정 요구사항, 이동 수단을 일정에 구체화
+
+---
+
+## 🟠 Priority 2: 운영시간 & 이동시간 (HIGHLY RECOMMENDED - 최대한 권장)
+
+이 우선순위는 **Priority 1과 충돌하지 않는 한 최대한 준수**해야 합니다.
+
+### 운영시간 준수
+- **목표**: 모든 방문은 운영시간 내에만 이루어져야 함
+- **요구사항**:
+  - arrival ≥ opening_time AND departure ≤ closing_time
+  - 휴무일 방문 절대 금지
+  - Google Maps Grounding Tool로 실제 운영시간 확인 필수
+- **Priority 1 충돌 시**: must_visit 우선, 날짜 재조정으로 운영시간 맞춤
+
+### 이동시간 정확성
+- **목표**: 실제 이동시간을 정확히 계산하여 반영
+- **요구사항**:
+  - Google Maps Grounding Tool로 실제 이동시간 계산
+  - visit[i+1].arrival = visit[i].departure + visit[i].travel_time
+  - 교통수단(DRIVE/TRANSIT/WALK/BICYCLE)을 고려한 이동시간
+- **검증**: 모든 travel_time > 0 (연속 방문 간), 첫/마지막 방문은 0
+
+---
+
+## 🟡 Priority 3: 최적화 (RECOMMENDED - 권장)
+
+이 우선순위는 **Priority 1, 2를 만족한 후 추가 개선 사항**입니다.
+
+- **이동시간 최소화**: 지리적으로 가까운 장소들을 묶어서 배치
+- **사용자 만족도 최대화**: chat 내용 기반 선호도를 최대한 반영
+- **체류시간 적절성**: 각 장소의 특성에 맞는 적절한 체류시간 할당
+- **예산 합리성**: 입장료, 식비 등이 합리적인 범위 내
+
+---
+
+**중요**: Priority 1 > Priority 2 > Priority 3 순서를 절대 지켜야 하며, 하위 우선순위가 상위 우선순위를 위반해서는 안 됩니다.
 
 ---
 
