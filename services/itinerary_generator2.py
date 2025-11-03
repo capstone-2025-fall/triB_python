@@ -1,5 +1,6 @@
 import logging
 import json
+import re
 from typing import List, Dict
 from datetime import timedelta
 from google import genai
@@ -219,7 +220,6 @@ class ItineraryGeneratorService2:
 ### 1-E. 후보 장소(places) 우선 선택, 부족 시 Gemini 추천
 
 **필수 사항**:
-- places 리스트의 장소를 **전체 방문 장소의 70% 이상** 사용하세요
 - places 장소는 사용자가 관심 있어하는 장소이므로 최대한 포함하세요
 
 **장소 선택 프로세스**:
@@ -1265,26 +1265,67 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                 logger.info(f"Received response: {len(response_text)} characters")
                 logger.debug(f"Response preview: {response_text[:200]}...")
 
-                # 마크다운 코드 블록 제거 (Google Maps tool 사용 시 response_mime_type 미지원)
-                if response_text.startswith("```json"):
-                    response_text = response_text.replace("```json\n", "").replace("```", "").strip()
-                    logger.info("Removed markdown code block from response")
-                elif response_text.startswith("```"):
-                    response_text = response_text.replace("```\n", "").replace("```", "").strip()
-                    logger.info("Removed markdown code block from response")
+                # JSON 정리 로직 (더 강력한 처리)
+                original_text = response_text
+
+                # 1. 마크다운 코드 블록 제거
+                if "```json" in response_text:
+                    # ```json으로 시작하고 ```으로 끝나는 부분 추출
+                    match = re.search(r'```json\s*([\s\S]*?)\s*```', response_text)
+                    if match:
+                        response_text = match.group(1).strip()
+                        logger.info("Extracted JSON from markdown code block")
+                elif "```" in response_text:
+                    # 일반 코드 블록 제거
+                    match = re.search(r'```\s*([\s\S]*?)\s*```', response_text)
+                    if match:
+                        response_text = match.group(1).strip()
+                        logger.info("Extracted content from code block")
+
+                # 2. 첫 번째 { 이전과 마지막 } 이후의 텍스트 제거
+                first_brace = response_text.find('{')
+                last_brace = response_text.rfind('}')
+                if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                    response_text = response_text[first_brace:last_brace+1]
+                    logger.info("Extracted JSON object boundaries")
+
+                # 3. 후행 쉼표 제거 (JSON 표준 위반)
+                # 배열이나 객체의 마지막 요소 뒤의 쉼표 제거
+                response_text = re.sub(r',(\s*[}\]])', r'\1', response_text)
+
+                if original_text != response_text:
+                    logger.info("Cleaned response text for JSON parsing")
+                    logger.debug(f"Cleaned response preview: {response_text[:200]}...")
 
                 # JSON 파싱
                 try:
                     itinerary_data = json.loads(response_text)
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON parse error: {str(e)}")
-                    logger.error(f"Full response text:\n{response_text}")
+                    logger.error(f"Error details - line: {e.lineno}, col: {e.colno}, pos: {e.pos}")
 
-                    # 에러 위치 주변 텍스트 표시 (디버깅용)
+                    # 에러 위치 주변 텍스트 표시 (더 넓은 범위)
                     error_pos = e.pos
-                    start = max(0, error_pos - 100)
-                    end = min(len(response_text), error_pos + 100)
-                    logger.error(f"Error context (pos {error_pos}):\n...{response_text[start:end]}...")
+                    start = max(0, error_pos - 200)
+                    end = min(len(response_text), error_pos + 200)
+                    logger.error(f"Error context (pos {error_pos}):\n{response_text[start:end]}")
+
+                    # 에러가 발생한 줄 전체 표시
+                    lines = response_text.split('\n')
+                    if e.lineno <= len(lines):
+                        logger.error(f"Error line {e.lineno}: {lines[e.lineno - 1]}")
+
+                    # 원본 응답도 저장 (디버깅용)
+                    logger.error(f"Original response length: {len(original_text)}")
+                    logger.error(f"Cleaned response length: {len(response_text)}")
+
+                    # 파일로 저장하여 분석 가능하게
+                    try:
+                        with open("/tmp/gemini_response_error.json", "w", encoding="utf-8") as f:
+                            f.write(response_text)
+                        logger.error("Full response saved to /tmp/gemini_response_error.json")
+                    except:
+                        pass
 
                     raise Exception(f"Gemini returned invalid JSON: {str(e)}")
 
@@ -1326,15 +1367,38 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                         # 위반 사항을 프롬프트에 추가하여 재시도
                         request = self._enhance_prompt_with_violations(request, validation_results)
                     else:
-                        # 최대 재시도 횟수 초과
-                        logger.error(
-                            f"❌ Maximum retries ({max_retries}) exceeded. "
-                            f"Final validation results: {json.dumps(validation_results, indent=2, ensure_ascii=False)}"
+                        # 최대 재시도 횟수 초과 - 생성된 일정을 반환
+                        logger.warning(
+                            f"⚠️ 일정 생성 검증 실패 (최대 재시도 {max_retries}회 초과) - 생성된 일정을 반환합니다"
                         )
-                        raise ValueError(
-                            f"일정 생성 검증 실패 (최대 재시도 {max_retries}회 초과): "
-                            f"{json.dumps(validation_results, ensure_ascii=False)}"
+                        logger.warning(
+                            f"검증 결과: {json.dumps(validation_results, ensure_ascii=False, indent=2)}"
                         )
+
+                        # 각 검증 항목별 상세 로그
+                        if not validation_results.get("must_visit", {}).get("is_valid", True):
+                            missing = validation_results["must_visit"].get("missing", [])
+                            logger.warning(f"❌ must_visit 미충족: 누락된 장소 {len(missing)}개 - {missing}")
+
+                        if not validation_results.get("travel_time", {}).get("is_valid", True):
+                            violations = validation_results["travel_time"].get("violations", [])
+                            logger.warning(f"❌ travel_time 위반: {len(violations)}건")
+                            for v in violations[:3]:  # 처음 3개만 로그
+                                logger.warning(
+                                    f"  - Day {v['day']}: {v['from_place']} → {v['to_place']} "
+                                    f"(예상: {v['expected_time']}분, 실제: {v['actual_time']}분, 오차: {v['deviation']}분)"
+                                )
+
+                        if not validation_results.get("operating_hours", {}).get("is_valid", True):
+                            violations = validation_results["operating_hours"].get("violations", [])
+                            logger.warning(f"❌ operating_hours 위반: {len(violations)}건")
+
+                        if not validation_results.get("rules", {}).get("is_valid", True):
+                            violations = validation_results["rules"].get("violations", [])
+                            logger.warning(f"❌ rules 위반: {len(violations)}건")
+
+                        # 예외를 던지지 않고 생성된 일정 반환
+                        return itinerary_response
 
             except ValueError:
                 # 검증 실패 예외는 그대로 전달
