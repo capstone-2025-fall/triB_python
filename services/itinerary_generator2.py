@@ -818,6 +818,78 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
    - 문자열은 큰따옴표(")로 감싸세요
 
 ---
+
+## 검증 체크리스트
+
+**응답하기 전에 Gemini가 스스로 검증할 사항**:
+
+### 🔴 Priority 1 검증 (MANDATORY - 절대 위반 불가)
+- [ ] **days 개수 정확한가?**
+  - len(itinerary) == days
+  - 예: days=3이면 정확히 3개의 day 객체 생성
+- [ ] **must_visit 모두 포함되었는가?**
+  - must_visit의 각 장소명이 itinerary의 어느 day에든 display_name으로 존재
+  - 모든 must_visit 장소가 빠짐없이 포함됨
+- [ ] **rule 모두 준수했는가?**
+  - 각 규칙이 일정에 정확히 반영됨
+  - 시간 제약, 활동 요구, 장소 우선순위, 이동 제약 모두 적용
+- [ ] **places 70% 이상 사용했는가?**
+  - (places에서 선택한 장소 수 / 전체 방문 장소 수) ≥ 70%
+
+### 🟠 Priority 2 검증 (HIGHLY RECOMMENDED - 최대한 준수)
+- [ ] **모든 운영시간 내 방문인가?**
+  - 각 방문의 arrival/departure가 운영시간 내
+  - 휴무일에 방문하는 장소가 없음
+  - Google Maps에서 요일별 운영시간 확인
+- [ ] **travel_time이 올바르게 계산되었는가?**
+  - 첫 번째 visit: 첫 번째 → 두 번째 이동시간
+  - 중간 visit: 현재 → 다음 이동시간
+  - 마지막 visit: 0
+  - 각 연속된 방문: visit[i+1].arrival = visit[i].departure + visit[i].travel_time
+
+### 제약사항 검증
+- [ ] **숙소(HOME) 출발/귀가 일정인가?**
+  - 각 day의 첫 번째 visit: place_tag=HOME
+  - 각 day의 마지막 visit: place_tag=HOME
+  - 예외: 규칙(rule)에 다른 패턴 명시된 경우
+- [ ] **하루 10-12시간 일정인가?**
+  - 기본적으로 하루 일정은 10-12시간
+  - 예외: chat에서 "여유롭게" (8-10시간) 또는 "알차게" (12-14시간) 언급 시
+
+### JSON 형식 검증
+- [ ] **순수 JSON만 출력했는가?**
+  - 마크다운 코드 블록(```) 없음
+  - 설명 텍스트 없음
+  - {{ "itinerary": [...], "budget": 500000 }} 형식
+- [ ] **budget이 itinerary 배열 밖에 있는가?**
+  - 최상위 객체: {{ "itinerary": [...], "budget": 숫자 }}
+  - budget이 배열 안에 들어가 있으면 안 됨
+
+---
+
+## 최종 지침
+
+### 응답 전 최종 확인
+
+1. **위 검증 체크리스트를 모두 확인했는가?**
+   - 🔴 Priority 1은 100% 준수
+   - 🟠 Priority 2는 최대한 준수 (90%+)
+   - 제약사항 및 JSON 형식 검증 완료
+
+2. **순수 JSON만 출력하는가?**
+   - ❌ ```json {{ ... }} ```
+   - ⭕ {{ "itinerary": [...], "budget": 500000 }}
+
+3. **모든 필드가 올바르게 채워졌는가?**
+   - 모든 장소에 Google Maps로 조회한 정확한 좌표, 주소
+   - 모든 arrival/departure가 "HH:MM" 형식
+   - 모든 travel_time이 올바르게 계산됨
+
+### 응답 생성
+
+위 모든 검증을 통과했다면, 순수 JSON만 출력하세요.
+
+---
 """
 
         return prompt
