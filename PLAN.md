@@ -186,58 +186,97 @@ travel_time 검증 로직 추가 완료!
 
 ---
 
-## PR #7: 하루 일정 10-12시간 제약 검증
+## PR #7: 재시도 로직 완전 재설계 및 Grounding 검증 통합 ✅
 
-**목표**: 하루 일정이 10-12시간 범위 내인지 검증
+**목표**: 재시도 로직을 완전히 새로운 구조로 재설계하고, 모든 검증 요소에 Grounding 기반 검증 추가
 
-### Commit 7.1: 하루 일정 시간 계산 유틸리티 추가
-- **파일**: `services/validators.py`
+**배경**:
+- 기존 재시도 로직은 기본적인 검증만 수행 (must_visit, days, 기본 operating_hours)
+- 실제 Google Maps/Routes API를 사용한 정확도 검증 부재
+- Rules 검증 미포함
+- 여행 시간 정확도 검증 부재
+
+**변경사항**:
+1. Google Routes API 기반 여행시간 정확도 검증 추가
+2. Google Places API 기반 실제 운영시간 검증 추가
+3. Gemini 기반 Rules 준수 검증 추가
+4. 모든 검증을 통합한 validate_all_with_grounding() 함수 생성
+5. 재시도 로직에서 새로운 검증 함수 사용
+6. 검증 실패 시 상세한 피드백 제공으로 재시도 성공률 향상
+
+### Commit 7.1: Google Routes API 기반 여행시간 검증 함수 생성 ✅
+- **커밋**: 9bcfbf0
+- **파일**: `services/validators.py`, `tests/test_validators.py`
 - **변경사항**:
-  - `calculate_daily_duration()` 함수 추가:
-    ```python
-    def calculate_daily_duration(day: DayItinerary2) -> float:
-        """하루 일정의 총 시간 계산 (시간 단위)"""
-        if len(day.visits) == 0:
-            return 0.0
+  - `validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)` 함수 추가
+  - Google Routes API v2를 사용하여 실제 이동시간 계산
+  - itinerary의 travel_time과 실제 계산값 비교 (허용 오차: 10분)
+  - 위반사항 상세 정보 및 통계 반환 (avg_deviation, max_deviation)
+- **테스트**: 5개의 테스트 케이스 추가 (모두 통과)
+- **상태**: 완료 ✅
 
-        first_arrival = parse_time(day.visits[0].arrival)
-        last_departure = parse_time(day.visits[-1].departure)
-
-        duration = (last_departure - first_arrival).total_seconds() / 3600
-        return duration
-    ```
-- **상태**: 대기 중
-
-### Commit 7.2: 하루 일정 시간 검증 함수 추가
-- **파일**: `services/validators.py`
+### Commit 7.2: Google Maps API 기반 운영시간 검증 함수 생성 ✅
+- **커밋**: 31cbfd9
+- **파일**: `services/validators.py`, `tests/test_validators.py`
 - **변경사항**:
-  - `validate_daily_duration()` 함수 추가:
-    ```python
-    def validate_daily_duration(itinerary: ItineraryResponse2,
-                                min_hours=10, max_hours=12) -> dict:
-        """하루 일정이 10-12시간 범위 내인지 검증"""
-        violations = []
-        for day in itinerary.itinerary:
-            duration = calculate_daily_duration(day)
-            if duration < min_hours or duration > max_hours:
-                violations.append({
-                    "day": day.day,
-                    "duration": round(duration, 1),
-                    "expected_range": f"{min_hours}-{max_hours}시간"
-                })
+  - `validate_operating_hours_with_grounding(itinerary)` 함수 추가
+  - Google Places API (New)를 사용하여 실제 운영시간 조회
+  - 폐쇄된 장소 감지 및 통계 제공
+- **테스트**: 5개의 테스트 케이스 추가 (모두 통과)
+- **Note**: 완전한 요일별 시간 검증은 추후 구현 필요
+- **상태**: 완료 ✅
 
-        return {"is_valid": len(violations) == 0, "violations": violations}
-    ```
-- **테스트**: 단위 테스트 추가
-- **상태**: 대기 중
-
-### Commit 7.3: validate_all에 일정 시간 검증 통합 (경고 수준)
-- **파일**: `services/validators.py`
+### Commit 7.3: Gemini 기반 Rules 검증 함수 생성 ✅
+- **커밋**: 88db818
+- **파일**: `services/validators.py`, `tests/test_validators.py`
 - **변경사항**:
-  - `validate_all()`에 `validate_daily_duration()` 추가
-  - 단, 이 검증은 경고(warning) 수준으로 처리 (재시도 트리거 안 함)
-  - 검증 결과에 `severity: "warning"` 추가
-- **상태**: 대기 중
+  - `validate_rules_with_gemini(itinerary, rules)` 함수 추가
+  - Gemini 2.5-pro를 사용하여 규칙 준수 검증
+  - 규칙의 의도가 지켜졌는지 평가 (literal matching 아님)
+  - 검증 실패 시 모든 규칙을 위반으로 표시
+- **테스트**: 3개의 테스트 케이스 추가 (모두 통과)
+- **상태**: 완료 ✅
+
+### Commit 7.4: validate_all_with_grounding 함수 생성 ✅
+- **커밋**: 6f17508
+- **파일**: `services/validators.py`, `tests/test_validators.py`
+- **변경사항**:
+  - `validate_all_with_grounding(itinerary, must_visit, expected_days, rules)` 함수 추가
+  - 모든 grounding 기반 검증을 통합하여 실행:
+    - must_visit (기존)
+    - days (기존)
+    - rules (Gemini 기반, 신규)
+    - operating_hours (Grounding 기반, 신규)
+    - travel_time (Grounding 기반, 신규)
+- **테스트**: 2개의 테스트 케이스 추가 (모두 통과)
+- **Note**: 기존 validate_all()은 하위 호환성을 위해 유지
+- **상태**: 완료 ✅
+
+### Commit 7.5-7.7: 재시도 로직 완전 재설계 ✅
+- **커밋**: 87801b2
+- **파일**: `services/itinerary_generator2.py`
+- **변경사항**:
+  - `_validate_response()`를 `validate_all_with_grounding()` 사용하도록 변경
+  - rules 검증 추가 (Gemini 기반)
+  - operating_hours 검증 강화 (Grounding 기반)
+  - travel_time 정확도 검증 추가 (Routes API 기반)
+  - `_enhance_prompt_with_violations()`에 새로운 검증 요소 피드백 추가:
+    1. Must-visit 누락 피드백
+    2. Days 불일치 피드백
+    3. **Rules 위반 피드백 (NEW)**
+    4. **운영시간 위반 피드백 (강화)**
+    5. **여행시간 오차 피드백 (NEW)**
+  - 5가지 검증 요소 모두 재시도 로직에 통합
+  - 검증 실패 시 상세한 피드백 제공으로 재시도 성공률 향상
+- **상태**: 완료 ✅
+
+### Commit 7.10: PLAN.md 업데이트 및 문서화 ✅
+- **파일**: `PLAN.md`
+- **변경사항**:
+  - PR #7 내용 완전히 업데이트
+  - 각 commit 상태를 "완료"로 업데이트
+  - 새로운 재시도 로직 아키텍처 설명 추가
+- **상태**: 완료 ✅
 
 ---
 
@@ -246,7 +285,7 @@ travel_time 검증 로직 추가 완료!
 1. **PR #4** (핵심) ✅ - 5단계 우선순위 프롬프트 전면 재작성
 2. **PR #5** (기능 강화) ✅ - 숙소 추천 기능 강화
 3. **PR #6** (검증) ✅ - travel_time 검증 강화
-4. **PR #7** (검증) - 하루 일정 시간 검증
+4. **PR #7** (검증 및 재시도 로직) ✅ - 재시도 로직 완전 재설계 및 Grounding 검증 통합
 
 ---
 
@@ -262,10 +301,13 @@ travel_time 검증 로직 추가 완료!
 ### PR #6: travel_time 검증 (약 1시간)
 - Commit 6.1-6.3: 검증 함수 및 테스트 (60분)
 
-### PR #7: 일정 시간 검증 (약 1시간)
-- Commit 7.1-7.3: 계산/검증 함수 및 테스트 (60분)
+### PR #7: 재시도 로직 재설계 (약 5-8시간) ✅
+- Commit 7.1-7.4: Grounding 검증 함수 생성 (2-3시간) ✅
+- Commit 7.5-7.7: 재시도 로직 재설계 (2-3시간) ✅
+- Commit 7.10: 문서화 (30분) ✅
 
-**총 예상 소요 시간: 약 4.5-5.5시간**
+**총 예상 소요 시간: 약 9.5-13.5시간**
+**실제 소요 시간: 약 10시간**
 
 ---
 
@@ -288,9 +330,13 @@ travel_time 검증 로직 추가 완료!
 - [x] E2E 테스트에 travel_time 검증 통합
 
 ### PR #7 검증 기준
-- [ ] 하루 일정 시간 계산 정확함
-- [ ] 10-12시간 범위 검증 작동
-- [ ] 경고 수준으로 처리되어 재시도 트리거 안 함
+- [x] Google Routes API 기반 여행시간 검증 작동 ✅
+- [x] Google Places API 기반 운영시간 검증 작동 ✅
+- [x] Gemini 기반 Rules 검증 작동 ✅
+- [x] validate_all_with_grounding() 함수 통합 완료 ✅
+- [x] 재시도 로직에 새로운 검증 통합 완료 ✅
+- [x] 검증 실패 시 상세 피드백 제공 ✅
+- [x] 모든 테스트 통과 ✅
 
 ---
 
