@@ -1008,3 +1008,204 @@ def test_validate_travel_time_with_grounding_custom_tolerance():
     assert result_lenient["total_validated"] == 1
     # Lenient tolerance should have fewer or equal violations
     assert len(result_lenient["violations"]) <= len(result_strict["violations"])
+
+
+# =============================================================================
+# validate_operating_hours_with_grounding() Tests
+# =============================================================================
+
+def test_validate_operating_hours_with_grounding_valid():
+    """
+    Test validate_operating_hours_with_grounding with valid operating hours.
+
+    Note: This test uses real Google Places API calls.
+    """
+    from services.validators import validate_operating_hours_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    # Create itinerary with realistic Seoul locations during reasonable hours
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_operating_hours_with_grounding(itinerary)
+
+    assert "is_valid" in result
+    assert "violations" in result
+    assert "total_validated" in result
+    assert "statistics" in result
+    assert result["total_validated"] == 1
+
+
+def test_validate_operating_hours_with_grounding_empty():
+    """
+    Test validate_operating_hours_with_grounding with empty itinerary.
+    """
+    from services.validators import validate_operating_hours_with_grounding
+    from models.schemas2 import ItineraryResponse2
+
+    itinerary = ItineraryResponse2(
+        itinerary=[],
+        budget=100000
+    )
+
+    result = validate_operating_hours_with_grounding(itinerary)
+
+    assert result["is_valid"] is True
+    assert result["total_validated"] == 0
+    assert len(result["violations"]) == 0
+    assert result["statistics"]["closed_visits"] == 0
+    assert result["statistics"]["outside_hours_visits"] == 0
+
+
+def test_validate_operating_hours_with_grounding_multiple_visits():
+    """
+    Test validate_operating_hours_with_grounding with multiple visits.
+    """
+    from services.validators import validate_operating_hours_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=15
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Bukchon Hanok Village",
+                        name_address="Bukchon Hanok Village, 37 Gyedong-gil, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5825,
+                        longitude=126.9830,
+                        arrival="12:15",
+                        departure="14:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_operating_hours_with_grounding(itinerary)
+
+    assert result["total_validated"] == 2
+    assert "statistics" in result
+
+
+def test_validate_operating_hours_with_grounding_statistics():
+    """
+    Test that statistics are properly calculated.
+    """
+    from services.validators import validate_operating_hours_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_operating_hours_with_grounding(itinerary)
+
+    assert "closed_visits" in result["statistics"]
+    assert "outside_hours_visits" in result["statistics"]
+    assert "no_hours_data" in result["statistics"]
+    assert isinstance(result["statistics"]["closed_visits"], int)
+    assert isinstance(result["statistics"]["outside_hours_visits"], int)
+    assert isinstance(result["statistics"]["no_hours_data"], int)
+
+
+def test_validate_operating_hours_with_grounding_multiple_days():
+    """
+    Test validate_operating_hours_with_grounding with multiple days.
+    """
+    from services.validators import validate_operating_hours_with_grounding
+    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Gyeongbokgung Palace",
+                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5796,
+                        longitude=126.9770,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            ),
+            DayItinerary2(
+                day=2,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="N Seoul Tower",
+                        name_address="N Seoul Tower, 105 Namsangongwon-gil, Yongsan-gu, Seoul",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5512,
+                        longitude=126.9882,
+                        arrival="10:00",
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    result = validate_operating_hours_with_grounding(itinerary)
+
+    assert result["total_validated"] == 2
