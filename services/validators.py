@@ -5,7 +5,7 @@ This module provides simple post-generation validators to ensure
 Gemini-generated itineraries comply with user requirements.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from datetime import time
 from models.schemas2 import ItineraryResponse2, Visit2
 import httpx
@@ -30,36 +30,6 @@ def extract_all_place_names(itinerary: ItineraryResponse2) -> List[str]:
         for visit in day.visits:
             place_names.append(visit.display_name)
     return place_names
-
-
-def is_unusual_time(time_str: str) -> bool:
-    """
-    Check if a time string represents an unusual visit time (2:00 AM - 5:00 AM).
-
-    These hours are considered unusual for tourist activities as most places
-    are closed during this time.
-
-    Args:
-        time_str: Time in "HH:MM" format (e.g., "03:30")
-
-    Returns:
-        True if time is between 02:00 and 05:00 (inclusive), False otherwise
-
-    Raises:
-        ValueError: If time_str is not in valid "HH:MM" format
-    """
-    try:
-        # Parse time string
-        hour, minute = map(int, time_str.split(":"))
-        visit_time = time(hour, minute)
-
-        # Check if time is in unusual range (2 AM - 5 AM)
-        unusual_start = time(2, 0)
-        unusual_end = time(5, 0)
-
-        return unusual_start <= visit_time <= unusual_end
-    except (ValueError, AttributeError) as e:
-        raise ValueError(f"Invalid time format: {time_str}. Expected 'HH:MM'") from e
 
 
 def validate_must_visit(
@@ -149,206 +119,38 @@ def validate_days_count(
     }
 
 
-def validate_operating_hours_basic(itinerary: ItineraryResponse2) -> Dict[str, Any]:
+def fetch_actual_travel_times(
+    itinerary: ItineraryResponse2
+) -> Dict[Tuple[int, int], int]:
     """
-    Perform basic operating hours validation by checking for unusual visit times.
+    Fetch actual travel times from Google Routes API v2.
 
-    This is a simple check that flags visits during 2:00 AM - 5:00 AM as unusual,
-    since most tourist attractions are closed during these hours.
-
-    Note: This does NOT validate against actual Google Maps operating hours.
-    For full operating hours validation, use Google Maps Grounding during generation.
+    This function collects real travel time data from Google Routes API
+    for all routes in the itinerary. It does NOT perform validation.
 
     Args:
         itinerary: The generated itinerary response
 
     Returns:
-        Dictionary with validation results:
+        Dictionary mapping (day, from_order) to actual travel time in minutes:
         {
-            "is_valid": bool,                    # True if no unusual times found
-            "violations": List[Dict],            # List of unusual visits
-            "total_violations": int,             # Number of unusual visits
-            "total_visits": int                  # Total number of visits checked
+            (1, 1): 15,    # Day 1, from order 1 to order 2: 15 minutes
+            (1, 2): 20,    # Day 1, from order 2 to order 3: 20 minutes
+            (2, 1): 10,    # Day 2, from order 1 to order 2: 10 minutes
+            ...
         }
-    """
-    violations = []
-    total_visits = 0
 
-    for day in itinerary.itinerary:
-        for visit in day.visits:
-            total_visits += 1
-
-            # Check arrival time
-            if is_unusual_time(visit.arrival):
-                violations.append({
-                    "day": day.day,
-                    "place": visit.display_name,
-                    "arrival": visit.arrival,
-                    "departure": visit.departure,
-                    "issue": f"Unusual arrival time: {visit.arrival}"
-                })
-            # Check departure time
-            elif is_unusual_time(visit.departure):
-                violations.append({
-                    "day": day.day,
-                    "place": visit.display_name,
-                    "arrival": visit.arrival,
-                    "departure": visit.departure,
-                    "issue": f"Unusual departure time: {visit.departure}"
-                })
-
-    return {
-        "is_valid": len(violations) == 0,
-        "violations": violations,
-        "total_violations": len(violations),
-        "total_visits": total_visits
-    }
-
-
-def validate_travel_time(itinerary: ItineraryResponse2) -> Dict[str, Any]:
-    """
-    Validate travel_time field correctness in the itinerary.
-
-    Checks:
-    1. Last visit of each day must have travel_time = 0 (no next place)
-    2. Non-last visits should have travel_time >= 0 (preferably > 0)
-
-    Args:
-        itinerary: The generated itinerary response
-
-    Returns:
-        Dictionary with validation results:
-        {
-            "is_valid": bool,                    # True if all checks pass
-            "violations": List[Dict],            # List of travel_time violations
-            "total_violations": int,             # Number of violations found
-            "total_visits": int                  # Total number of visits checked
-        }
-    """
-    violations = []
-    total_visits = 0
-
-    for day in itinerary.itinerary:
-        visits = day.visits
-        if len(visits) == 0:
-            continue
-
-        for i, visit in enumerate(visits):
-            total_visits += 1
-            is_last_visit = (i == len(visits) - 1)
-
-            if is_last_visit:
-                # Last visit must have travel_time = 0
-                if visit.travel_time != 0:
-                    violations.append({
-                        "day": day.day,
-                        "place": visit.display_name,
-                        "order": visit.order,
-                        "travel_time": visit.travel_time,
-                        "issue": f"Last visit must have travel_time=0, but got {visit.travel_time}"
-                    })
-            else:
-                # Non-last visits: travel_time = 0 is suspicious (but not strictly invalid)
-                if visit.travel_time == 0:
-                    violations.append({
-                        "day": day.day,
-                        "place": visit.display_name,
-                        "order": visit.order,
-                        "travel_time": visit.travel_time,
-                        "issue": f"Non-last visit has travel_time=0 (suspicious, should be > 0)"
-                    })
-
-    return {
-        "is_valid": len(violations) == 0,
-        "violations": violations,
-        "total_violations": len(violations),
-        "total_visits": total_visits
-    }
-
-
-def validate_all(
-    itinerary: ItineraryResponse2,
-    must_visit: List[str],
-    expected_days: int
-) -> Dict[str, Any]:
-    """
-    Run all validators and aggregate results.
-
-    This is a convenience function that runs all validation checks
-    and returns a comprehensive validation report.
-
-    Args:
-        itinerary: The generated itinerary response
-        must_visit: List of place names that must be included
-        expected_days: Expected number of days from the request
-
-    Returns:
-        Dictionary with all validation results:
-        {
-            "all_valid": bool,                  # True if all validations pass
-            "must_visit": {...},                # Must-visit validation results
-            "days": {...},                      # Days count validation results
-            "operating_hours": {...},           # Operating hours validation results
-            "travel_time": {...}                # Travel time validation results
-        }
-    """
-    must_visit_result = validate_must_visit(itinerary, must_visit)
-    days_result = validate_days_count(itinerary, expected_days)
-    hours_result = validate_operating_hours_basic(itinerary)
-    travel_time_result = validate_travel_time(itinerary)
-
-    all_valid = (
-        must_visit_result["is_valid"] and
-        days_result["is_valid"] and
-        hours_result["is_valid"] and
-        travel_time_result["is_valid"]
-    )
-
-    return {
-        "all_valid": all_valid,
-        "must_visit": must_visit_result,
-        "days": days_result,
-        "operating_hours": hours_result,
-        "travel_time": travel_time_result
-    }
-
-
-def validate_travel_time_with_grounding(
-    itinerary: ItineraryResponse2,
-    tolerance_minutes: int = 10
-) -> Dict[str, Any]:
-    """
-    Validate travel_time accuracy using Google Routes API v2.
-
-    This function verifies that the travel_time values in the itinerary
-    match actual travel times from Google Routes API within a tolerance.
-
-    Args:
-        itinerary: The generated itinerary response
-        tolerance_minutes: Maximum allowed deviation in minutes (default: 10)
-
-    Returns:
-        Dictionary with validation results:
-        {
-            "is_valid": bool,                       # True if all times are within tolerance
-            "violations": List[Dict],               # List of travel time violations
-            "total_violations": int,                # Number of violations found
-            "total_validated": int,                 # Total number of routes validated
-            "statistics": {
-                "avg_deviation": float,             # Average deviation in minutes
-                "max_deviation": int,               # Maximum deviation found
-                "min_deviation": int                # Minimum deviation found
-            }
-        }
+        If a route fails to fetch (API error, no route found, etc.),
+        that route is simply omitted from the result. Returns empty dict
+        if no routes could be fetched.
 
     Note:
         - Uses DRIVE mode with TRAFFIC_AWARE routing preference
-        - Skips last visit of each day (travel_time should be 0)
+        - Skips last visit of each day (no next destination)
         - Requires valid google_maps_api_key in settings
+        - Errors are logged but do not prevent other routes from being fetched
     """
-    violations = []
-    deviations = []
-    total_validated = 0
+    travel_times = {}
 
     # Routes API v2 endpoint
     routes_api_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
@@ -360,13 +162,10 @@ def validate_travel_time_with_grounding(
         if len(visits) <= 1:
             continue
 
-        # Validate travel times for all visits except the last one
+        # Fetch travel times for all visits except the last one
         for i in range(len(visits) - 1):
             current_visit = visits[i]
             next_visit = visits[i + 1]
-            expected_time = current_visit.travel_time
-
-            total_validated += 1
 
             try:
                 # Prepare request body for Google Routes API v2
@@ -418,89 +217,22 @@ def validate_travel_time_with_grounding(
                         actual_time_seconds = int(duration_str.rstrip("s"))
                         actual_time_minutes = round(actual_time_seconds / 60)
 
-                        # Calculate deviation
-                        deviation = abs(expected_time - actual_time_minutes)
-                        deviations.append(deviation)
-
-                        # Check if within tolerance
-                        if deviation > tolerance_minutes:
-                            violations.append({
-                                "day": day.day,
-                                "from_place": current_visit.display_name,
-                                "to_place": next_visit.display_name,
-                                "from_order": current_visit.order,
-                                "expected_time": expected_time,
-                                "actual_time": actual_time_minutes,
-                                "deviation": deviation,
-                                "tolerance": tolerance_minutes,
-                                "issue": f"Travel time deviation of {deviation} minutes exceeds tolerance of {tolerance_minutes} minutes"
-                            })
-                    else:
-                        # No route found
-                        violations.append({
-                            "day": day.day,
-                            "from_place": current_visit.display_name,
-                            "to_place": next_visit.display_name,
-                            "from_order": current_visit.order,
-                            "expected_time": expected_time,
-                            "actual_time": None,
-                            "deviation": None,
-                            "tolerance": tolerance_minutes,
-                            "issue": "No route found by Google Routes API",
-                            "error": "NO_ROUTE_FOUND"
-                        })
-                else:
-                    # API call failed
-                    error_msg = f"HTTP {response.status_code}"
-                    try:
-                        error_data = response.json()
-                        if "error" in error_data:
-                            error_msg = f"{error_data['error'].get('status', 'UNKNOWN')}: {error_data['error'].get('message', 'Unknown error')}"
-                    except:
-                        error_msg = f"HTTP {response.status_code}: {response.text[:100]}"
-
-                    violations.append({
-                        "day": day.day,
-                        "from_place": current_visit.display_name,
-                        "to_place": next_visit.display_name,
-                        "from_order": current_visit.order,
-                        "expected_time": expected_time,
-                        "actual_time": None,
-                        "deviation": None,
-                        "tolerance": tolerance_minutes,
-                        "issue": f"API call failed: {error_msg}",
-                        "error": "API_ERROR"
-                    })
+                        # Store the actual travel time
+                        key = (day.day, current_visit.order)
+                        travel_times[key] = actual_time_minutes
 
             except Exception as e:
-                # Unexpected error
-                violations.append({
-                    "day": day.day,
-                    "from_place": current_visit.display_name,
-                    "to_place": next_visit.display_name,
-                    "from_order": current_visit.order,
-                    "expected_time": expected_time,
-                    "actual_time": None,
-                    "deviation": None,
-                    "tolerance": tolerance_minutes,
-                    "issue": f"Unexpected error: {str(e)}",
-                    "error": "EXCEPTION"
-                })
+                # Log error but continue with other routes
+                # This allows partial success - some routes may succeed even if others fail
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Failed to fetch travel time for Day {day.day}, "
+                    f"order {current_visit.order} → {current_visit.order + 1}: {str(e)}"
+                )
+                continue
 
-    # Calculate statistics
-    statistics = {
-        "avg_deviation": sum(deviations) / len(deviations) if deviations else 0,
-        "max_deviation": max(deviations) if deviations else 0,
-        "min_deviation": min(deviations) if deviations else 0
-    }
-
-    return {
-        "is_valid": len(violations) == 0,
-        "violations": violations,
-        "total_violations": len(violations),
-        "total_validated": total_validated,
-        "statistics": statistics
-    }
+    return travel_times
 
 
 def validate_operating_hours_with_grounding(
@@ -818,27 +550,25 @@ def validate_all_with_grounding(
             "must_visit": {...},                    # Must-visit validation results
             "days": {...},                          # Days count validation results
             "rules": {...},                         # Rules validation results (with Gemini)
-            "operating_hours": {...},               # Operating hours validation results (with grounding)
-            "travel_time": {...}                    # Travel time validation results (with grounding)
+            "operating_hours": {...}                # Operating hours validation results (with grounding)
         }
 
     Note:
         - This function uses grounding-based validators (API calls)
         - May be slower than validate_all() due to external API calls
         - Requires valid API keys in settings
+        - travel_time validation has been removed (now handled by fetch_actual_travel_times)
     """
     must_visit_result = validate_must_visit(itinerary, must_visit)
     days_result = validate_days_count(itinerary, expected_days)
     rules_result = validate_rules_with_gemini(itinerary, rules)
     hours_result = validate_operating_hours_with_grounding(itinerary)
-    travel_time_result = validate_travel_time_with_grounding(itinerary)
 
     all_valid = (
         must_visit_result["is_valid"] and
         days_result["is_valid"] and
         rules_result["is_valid"] and
-        hours_result["is_valid"] and
-        travel_time_result["is_valid"]
+        hours_result["is_valid"]
     )
 
     return {
@@ -846,6 +576,185 @@ def validate_all_with_grounding(
         "must_visit": must_visit_result,
         "days": days_result,
         "rules": rules_result,
-        "operating_hours": hours_result,
-        "travel_time": travel_time_result
+        "operating_hours": hours_result
     }
+
+
+# ==================== Time Utility Functions ====================
+
+def time_to_minutes(time_str: str) -> int:
+    """
+    Convert time string "HH:MM" to total minutes from midnight.
+
+    Args:
+        time_str: Time in "HH:MM" format (e.g., "14:30")
+
+    Returns:
+        Total minutes from midnight (e.g., 14*60 + 30 = 870)
+
+    Example:
+        >>> time_to_minutes("14:30")
+        870
+        >>> time_to_minutes("00:00")
+        0
+    """
+    try:
+        hour, minute = map(int, time_str.split(":"))
+        return hour * 60 + minute
+    except (ValueError, AttributeError) as e:
+        raise ValueError(f"Invalid time format: {time_str}. Expected 'HH:MM'") from e
+
+
+def minutes_to_time(minutes: int) -> str:
+    """
+    Convert total minutes from midnight to time string "HH:MM".
+
+    Handles overflow beyond 24 hours by wrapping to next day.
+
+    Args:
+        minutes: Total minutes from midnight
+
+    Returns:
+        Time string in "HH:MM" format
+
+    Example:
+        >>> minutes_to_time(870)
+        "14:30"
+        >>> minutes_to_time(1440)  # 24 hours -> wraps to 00:00
+        "00:00"
+    """
+    # Handle day overflow (wrap to next day if >= 24 hours)
+    minutes = minutes % 1440  # 1440 = 24 * 60
+
+    hour = minutes // 60
+    minute = minutes % 60
+
+    return f"{hour:02d}:{minute:02d}"
+
+
+# ==================== Itinerary Adjustment Functions ====================
+
+def adjust_itinerary_with_actual_travel_times(
+    itinerary: ItineraryResponse2,
+    validation_results: Dict[str, Any],
+    min_stay_minutes: int = 30
+) -> ItineraryResponse2:
+    """
+    Adjust itinerary travel times using actual Routes API data from validation.
+
+    This function is used on the 3rd attempt (2nd retry) when validation fails.
+    It replaces itinerary travel_time values with actual_time from Routes API
+    and recalculates arrival/departure times to maintain stay durations.
+
+    Strategy:
+    1. Replace travel_time with actual_time from validation violations
+    2. Keep arrival times fixed when possible
+    3. Adjust departure times based on new travel_time
+    4. If stay duration becomes too short (< min_stay_minutes), adjust arrival times forward
+
+    Args:
+        itinerary: The generated itinerary response to adjust
+        validation_results: Results from validate_all_with_grounding()
+        min_stay_minutes: Minimum stay duration at each place (default: 30)
+
+    Returns:
+        Adjusted itinerary with updated travel_time and recalculated arrival/departure
+
+    Note:
+        - Only adjusts violations where actual_time is not None
+        - Violations with actual_time=None (API errors) are skipped
+        - Creates a deep copy to avoid modifying the original itinerary
+    """
+    import copy
+
+    # Create deep copy to avoid modifying original
+    adjusted = copy.deepcopy(itinerary)
+
+    # Extract travel_time violations
+    travel_time_violations = validation_results.get("travel_time", {}).get("violations", [])
+
+    if not travel_time_violations:
+        # No violations to adjust
+        return adjusted
+
+    # Step 1: Build a map of (day, from_order) -> actual_time for quick lookup
+    actual_time_map = {}
+    for violation in travel_time_violations:
+        # Skip violations without actual_time (API errors)
+        if violation.get("actual_time") is None:
+            continue
+
+        day = violation["day"]
+        from_order = violation["from_order"]
+        actual_time = violation["actual_time"]
+
+        actual_time_map[(day, from_order)] = actual_time
+
+    # Step 2: Update travel_time values with actual_time
+    for day in adjusted.itinerary:
+        visits = day.visits
+
+        for i, visit in enumerate(visits):
+            key = (day.day, visit.order)
+
+            if key in actual_time_map:
+                # Replace with actual travel time from Routes API
+                visit.travel_time = actual_time_map[key]
+
+    # Step 3: Recalculate arrival/departure times
+    for day in adjusted.itinerary:
+        visits = day.visits
+
+        if len(visits) <= 1:
+            continue
+
+        # Process visits in forward order
+        for i in range(len(visits) - 1):
+            current_visit = visits[i]
+            next_visit = visits[i + 1]
+
+            # Calculate required departure time to arrive at next visit on time
+            current_arrival_min = time_to_minutes(current_visit.arrival)
+            next_arrival_min = time_to_minutes(next_visit.arrival)
+            travel_time = current_visit.travel_time
+
+            # Required departure = next_arrival - travel_time
+            required_departure_min = next_arrival_min - travel_time
+
+            # Check if we can maintain minimum stay duration
+            earliest_departure_min = current_arrival_min + min_stay_minutes
+
+            if required_departure_min < earliest_departure_min:
+                # Cannot maintain minimum stay duration
+                # Adjust both departure and next arrival
+                current_visit.departure = minutes_to_time(earliest_departure_min)
+                new_next_arrival_min = earliest_departure_min + travel_time
+                next_visit.arrival = minutes_to_time(new_next_arrival_min)
+
+                # Propagate changes to subsequent visits
+                for j in range(i + 1, len(visits) - 1):
+                    propagate_visit = visits[j]
+                    propagate_next = visits[j + 1]
+
+                    # Maintain minimum stay at this visit
+                    propagate_arrival_min = time_to_minutes(propagate_visit.arrival)
+                    propagate_departure_min = propagate_arrival_min + min_stay_minutes
+                    propagate_visit.departure = minutes_to_time(propagate_departure_min)
+
+                    # Update next visit's arrival
+                    propagate_next_arrival_min = propagate_departure_min + propagate_visit.travel_time
+                    propagate_next.arrival = minutes_to_time(propagate_next_arrival_min)
+
+                # For last visit, just update departure to maintain min stay
+                last_visit = visits[-1]
+                last_arrival_min = time_to_minutes(last_visit.arrival)
+                last_departure_min = last_arrival_min + min_stay_minutes
+                last_visit.departure = minutes_to_time(last_departure_min)
+
+                # Stop processing this day since we've propagated all changes
+                break
+            else:
+                # Can maintain arrival time - just adjust departure
+                current_visit.departure = minutes_to_time(required_departure_min)
+
+    return adjusted

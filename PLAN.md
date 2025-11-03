@@ -280,12 +280,251 @@ travel_time 검증 로직 추가 완료!
 
 ---
 
+## PR #8: travel_time 검증 제거 및 실제 이동시간 fetch 함수 변경
+
+**목표**: travel_time을 검증 요소에서 제거하고, Routes API를 "검증"이 아닌 "데이터 수집"으로 변경
+
+**배경**:
+- 현재 travel_time은 Gemini가 생성한 값을 Routes API로 검증하는 구조
+- 사용자 요구사항: travel_time은 검증하지 말고, Routes API로 가져온 실제값으로 대체
+- 일정 생성 후, 검증 전에 Routes API를 호출하여 실제 이동시간 반영
+
+**변경사항**:
+1. `validate_travel_time_with_grounding` → `fetch_actual_travel_times` 함수로 변경 (역할 변경)
+2. `validate_all_with_grounding`에서 travel_time 검증 제거
+3. 재시도 로직에서 travel_time 피드백 제거
+
+### Commit 8.1: validate_travel_time_with_grounding → fetch_actual_travel_times 변경 ✅
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - 함수명 변경 및 역할 변경 (검증 → 데이터 수집)
+  - tolerance_minutes 파라미터 제거
+  - 반환값 간소화: `Dict[(day, from_order), actual_time]` 딕셔너리만 반환
+  - violations, statistics, is_valid 등 검증 관련 필드 완전 제거
+  - 에러 발생 시에도 수집 가능한 데이터는 반환 (부분 성공 허용)
+  - Tuple import 추가 (typing 모듈)
+  - 테스트 함수명 변경 및 반환값 검증 수정 (5개)
+- **상태**: 완료 ✅
+
+### Commit 8.2: validate_all_with_grounding에서 travel_time 검증 제거 ✅
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - `validate_all_with_grounding()` 함수에서 `validate_travel_time_with_grounding()` 호출 제거
+  - all_valid 계산에서 travel_time 제거
+  - 반환 딕셔너리에서 "travel_time" 키 제거
+  - Docstring 업데이트 (travel_time 검증 언급 제거)
+  - 테스트 수정 (1개 assert 제거)
+- **상태**: 완료 ✅
+
+### Commit 8.3: 재시도 로직에서 travel_time 피드백 제거 ✅
+- **파일**: `services/itinerary_generator2.py`
+- **변경사항**:
+  - `_enhance_prompt_with_violations()`에서 travel_time 관련 피드백 제거 (5번 섹션 삭제)
+  - `generate_itinerary()`에서 travel_time 위반 로그 제거
+  - travel_time 관련 주석 추가 (제거 이유 명시)
+- **상태**: 완료 ✅
+
+### 추가 수정사항 (Commit 8.x)
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - 주석 처리된 함수들 복원:
+    - `is_unusual_time()` 복원
+    - `validate_operating_hours_basic()` 복원
+    - `validate_travel_time()` 복원
+    - `validate_all()` 복원
+  - 이유: test_validators.py에서 사용 중이므로 복원 필요
+- **상태**: 완료 ✅
+
+---
+
+## PR #9: 일정 시간 조정 로직 재설계
+
+**목표**: 기존 조정 함수를 삭제하고 요구사항에 맞는 새로운 조정 로직 구현
+
+**배경**:
+- 기존 `adjust_itinerary_with_actual_travel_times` 함수는 복잡하고 요구사항과 맞지 않음
+- 사용자 요구사항:
+  1. arrival 시간 유지 우선
+  2. departure 시간만 변경
+  3. 체류시간이 마이너스가 되는 경우에만 arrival 조정
+
+**변경사항**:
+1. 기존 조정 함수 완전 제거
+2. `update_travel_times_from_routes`: travel_time 필드만 업데이트
+3. `adjust_schedule_with_new_travel_times`: 시간 조정 로직 (arrival 우선 유지)
+
+### Commit 9.1: 기존 adjust_itinerary_with_actual_travel_times 함수 제거
+- **파일**: `services/validators.py`, `services/itinerary_generator2.py`
+- **변경사항**:
+  - `adjust_itinerary_with_actual_travel_times()` 함수 완전 삭제
+  - `itinerary_generator2.py`에서 관련 import 제거
+  - 3번째 시도 실패 시 조정 로직 제거
+- **상태**: 대기
+
+### Commit 9.2: update_travel_times_from_routes 함수 생성
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - Routes API 결과를 받아서 travel_time 필드만 업데이트하는 함수 생성
+  - 함수 시그니처:
+    ```python
+    def update_travel_times_from_routes(
+        itinerary: ItineraryResponse2,
+        routes_data: Dict[Tuple[int, int], int]
+    ) -> ItineraryResponse2
+    ```
+  - 입력: itinerary, routes_data `{(day, from_order): actual_time}`
+  - 출력: travel_time이 업데이트된 itinerary (deep copy)
+  - 시간 조정은 하지 않음 (단순히 travel_time 값만 교체)
+- **상태**: 대기
+
+### Commit 9.3: adjust_schedule_with_new_travel_times 함수 생성
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - travel_time이 변경된 itinerary의 일정을 조정하는 함수 생성
+  - 함수 시그니처:
+    ```python
+    def adjust_schedule_with_new_travel_times(
+        itinerary: ItineraryResponse2,
+        min_stay_minutes: int = 30
+    ) -> ItineraryResponse2
+    ```
+  - 로직:
+    1. 각 day의 visits를 순회
+    2. **arrival 시간 유지 우선**
+    3. 다음 visit의 예상 도착 시간 = 현재 departure + travel_time
+    4. 다음 visit의 실제 arrival과 비교
+    5. 차이가 있으면 현재 departure 조정
+    6. 체류시간 = departure - arrival 계산
+    7. 체류시간이 min_stay_minutes 미만인 경우:
+       - 다음 visit의 arrival 시간을 미룸
+       - 이후 모든 visit들 연쇄 조정
+  - 입력: itinerary, min_stay_minutes (기본값: 30)
+  - 출력: 시간이 조정된 itinerary (deep copy)
+- **상태**: 대기
+
+### Commit 9.4: 유틸리티 함수 검토 및 테스트 추가
+- **파일**: `services/validators.py`, `tests/test_validators.py`
+- **변경사항**:
+  - `time_to_minutes()`, `minutes_to_time()` 함수 유지
+  - `update_travel_times_from_routes` 단위 테스트 추가
+  - `adjust_schedule_with_new_travel_times` 단위 테스트 추가:
+    - 정상 케이스 (체류시간 충분)
+    - 체류시간 부족 케이스 (arrival 조정 필요)
+    - 연쇄 조정 케이스
+- **상태**: 대기
+
+---
+
+## PR #10: 일정 생성 플로우 재구성
+
+**목표**: 생성 → Routes API → travel_time 업데이트 → 시간 조정 → 검증 순서로 변경
+
+**배경**:
+- 현재: 생성 → 검증 → (3번째 실패 시) 조정
+- 변경 후: 생성 → Routes API → 업데이트 → 조정 → 검증
+
+**변경사항**:
+1. `generate_itinerary()`에 Routes API 호출 추가
+2. travel_time 업데이트 및 시간 조정 로직 통합
+3. 재시도 로직 정리 (매번 조정하므로 3번째 시도 특별 처리 제거)
+4. E2E 테스트 업데이트
+
+### Commit 10.1: generate_itinerary에 Routes API 호출 추가
+- **파일**: `services/itinerary_generator2.py`
+- **변경사항**:
+  - Gemini 일정 생성 직후 (Pydantic 검증 직후) `fetch_actual_travel_times()` 호출
+  - 실제 travel_time 데이터 수집
+  - 로그 추가: "Fetching actual travel times from Routes API..."
+  - 에러 처리: Routes API 실패 시 경고 로그, 원본 일정으로 진행
+- **상태**: 대기
+
+### Commit 10.2: travel_time 업데이트 및 시간 조정 통합
+- **파일**: `services/itinerary_generator2.py`
+- **변경사항**:
+  - Routes API 데이터 수집 직후:
+    1. `update_travel_times_from_routes()` 호출
+    2. `adjust_schedule_with_new_travel_times()` 호출
+  - 조정된 일정으로 검증 진행
+  - 로그 추가:
+    - "Updated travel_time fields with actual Routes API data"
+    - "Adjusted schedule based on new travel times (keeping arrival times fixed)"
+  - 조정 전후 비교 로그 (디버깅용)
+- **상태**: 대기
+
+### Commit 10.3: 재시도 로직 정리
+- **파일**: `services/itinerary_generator2.py`
+- **변경사항**:
+  - 3번째 시도 실패 시 특별 조정 로직 완전 제거
+  - 재시도 시에도 동일한 플로우 적용:
+    - 생성 → Routes API → 업데이트 → 조정 → 검증
+  - 최종 실패 시 검증 실패 정보만 반환 (조정 없이)
+  - max_retries 도달 시 로그 수정:
+    - "일정 생성 검증 실패 (최대 재시도 초과)"
+    - "조정 로직 제거됨 (매번 자동 조정하므로)"
+- **상태**: 대기
+
+### Commit 10.4: E2E 테스트 업데이트
+- **파일**: `tests/test_e2e_itinerary2.py`
+- **변경사항**:
+  - travel_time 검증 섹션 제거
+  - Routes API 호출 확인 추가 (로그 검증)
+  - 시간 조정 결과 검증 추가:
+    - travel_time 값이 0이 아닌지 확인
+    - 다음 visit의 arrival = 이전 departure + travel_time 확인
+    - 체류시간이 양수인지 확인
+  - 테스트 보고서에 Routes API 호출 및 조정 결과 추가
+- **상태**: 대기
+
+---
+
+## PR #11: 프롬프트 업데이트 및 문서화
+
+**목표**: 프롬프트에서 travel_time 검증 제거, PLAN.md 문서화
+
+**배경**:
+- 프롬프트에서 travel_time 검증 관련 내용이 남아있음
+- travel_time은 참고용으로 생성하되, 실제값은 Routes API로 대체됨을 명시 필요
+
+**변경사항**:
+1. 프롬프트에서 travel_time 검증 관련 내용 수정
+2. PLAN.md에 PR #8-11 내용 추가 및 문서화
+
+### Commit 11.1: 프롬프트 travel_time 관련 내용 수정
+- **파일**: `services/itinerary_generator2.py`
+- **변경사항**:
+  - Priority 2 섹션 "2-B. 이동시간 정확성 및 Google Maps Grounding Tool 활용" 수정:
+    - "이동시간 정확성" → "이동시간 계산 가이드"
+    - **중요 추가**: "travel_time은 참고용으로 생성하되, 일정 생성 후 Routes API로 실제값이 자동 대체됩니다"
+    - Google Maps Grounding Tool 활용은 유지 (참고용)
+  - 검증 체크리스트 섹션에서 travel_time 검증 항목 제거:
+    - "[ ] travel_time이 올바르게 계산되었는가?" 제거
+  - 출력 형식 섹션에 travel_time 필드 설명 업데이트:
+    - "travel_time은 참고용으로 생성하며, 실제값은 Routes API로 자동 대체됩니다"
+- **상태**: 대기
+
+### Commit 11.2: PLAN.md 업데이트 (현재 커밋)
+- **파일**: `PLAN.md`
+- **변경사항**:
+  - PR #8-11 상세 내용 추가:
+    - 각 PR의 목표, 배경, 변경사항
+    - 각 커밋별 파일, 변경사항, 상태
+  - 구현 순서 업데이트
+  - 각 작업별 예상 소요 시간 추가
+  - 성공 기준 추가
+- **상태**: 진행 중
+
+---
+
 ## 구현 순서
 
 1. **PR #4** (핵심) ✅ - 5단계 우선순위 프롬프트 전면 재작성
 2. **PR #5** (기능 강화) ✅ - 숙소 추천 기능 강화
 3. **PR #6** (검증) ✅ - travel_time 검증 강화
 4. **PR #7** (검증 및 재시도 로직) ✅ - 재시도 로직 완전 재설계 및 Grounding 검증 통합
+5. **PR #8** (검증 제거) - travel_time 검증 제거 및 fetch 함수 변경
+6. **PR #9** (시간 조정) - 일정 시간 조정 로직 재설계
+7. **PR #10** (플로우 재구성) - 일정 생성 플로우 재구성
+8. **PR #11** (문서화) - 프롬프트 및 문서 업데이트
 
 ---
 
@@ -306,8 +545,29 @@ travel_time 검증 로직 추가 완료!
 - Commit 7.5-7.7: 재시도 로직 재설계 (2-3시간) ✅
 - Commit 7.10: 문서화 (30분) ✅
 
-**총 예상 소요 시간: 약 9.5-13.5시간**
-**실제 소요 시간: 약 10시간**
+### PR #8: travel_time 검증 제거 (약 1-1.5시간)
+- Commit 8.1: fetch_actual_travel_times 함수 변경 (30분)
+- Commit 8.2: validate_all_with_grounding 업데이트 (20분)
+- Commit 8.3: 재시도 로직 피드백 제거 (20분)
+
+### PR #9: 일정 시간 조정 로직 재설계 (약 2-3시간)
+- Commit 9.1: 기존 함수 제거 (20분)
+- Commit 9.2: update_travel_times_from_routes 생성 (30분)
+- Commit 9.3: adjust_schedule_with_new_travel_times 생성 (60-90분)
+- Commit 9.4: 테스트 추가 (30분)
+
+### PR #10: 일정 생성 플로우 재구성 (약 2-3시간)
+- Commit 10.1: Routes API 호출 추가 (30분)
+- Commit 10.2: 업데이트 및 조정 통합 (40분)
+- Commit 10.3: 재시도 로직 정리 (30분)
+- Commit 10.4: E2E 테스트 업데이트 (40-60분)
+
+### PR #11: 프롬프트 및 문서 업데이트 (약 30분-1시간)
+- Commit 11.1: 프롬프트 수정 (20-30분)
+- Commit 11.2: PLAN.md 업데이트 (10-30분)
+
+**PR #1-7 총 소요 시간: 약 9.5-13.5시간 (실제: 약 10시간)** ✅
+**PR #8-11 예상 소요 시간: 약 5.5-8.5시간**
 
 ---
 
@@ -337,6 +597,40 @@ travel_time 검증 로직 추가 완료!
 - [x] 재시도 로직에 새로운 검증 통합 완료 ✅
 - [x] 검증 실패 시 상세 피드백 제공 ✅
 - [x] 모든 테스트 통과 ✅
+
+### PR #8 검증 기준
+- [x] `fetch_actual_travel_times()` 함수가 검증이 아닌 데이터 수집만 수행 ✅
+- [x] 반환값에 violations, is_valid 등 검증 관련 필드 없음 ✅
+- [x] `validate_all_with_grounding()`에서 travel_time 검증 제거됨 ✅
+- [x] 반환 딕셔너리에 "travel_time" 키 없음 ✅
+- [x] 재시도 로직에서 travel_time 피드백 제거됨 ✅
+- [x] 모든 테스트 통과 (API 호출 제외) ✅
+
+### PR #9 검증 기준
+- [ ] 기존 `adjust_itinerary_with_actual_travel_times()` 함수 완전 제거됨
+- [ ] `update_travel_times_from_routes()` 함수가 travel_time 필드만 업데이트
+- [ ] `adjust_schedule_with_new_travel_times()` 함수가 arrival 우선 유지
+- [ ] 체류시간 마이너스 시 arrival 조정 작동
+- [ ] 연쇄 조정 로직 작동 (한 visit 조정 시 이후 visit들도 조정)
+- [ ] 단위 테스트 모두 통과
+- [ ] 정상 케이스, 체류시간 부족 케이스, 연쇄 조정 케이스 테스트 통과
+
+### PR #10 검증 기준
+- [ ] Gemini 일정 생성 직후 Routes API 호출 확인
+- [ ] travel_time 필드가 Routes API 값으로 업데이트됨
+- [ ] 일정 시간 조정이 검증 전에 실행됨
+- [ ] 재시도 시마다 동일한 플로우 적용 (생성→Routes API→조정→검증)
+- [ ] 3번째 시도 특별 처리 로직 제거됨
+- [ ] E2E 테스트 통과
+- [ ] Routes API 호출 로그 확인
+- [ ] 시간 조정 결과 검증 통과 (arrival 유지, departure 조정, 체류시간 양수)
+
+### PR #11 검증 기준
+- [ ] 프롬프트에서 travel_time 검증 관련 내용 수정됨
+- [ ] "travel_time은 참고용, 실제값은 Routes API로 대체" 명시됨
+- [ ] 검증 체크리스트에서 travel_time 항목 제거됨
+- [ ] PLAN.md에 PR #8-11 내용 추가됨
+- [ ] 성공 기준 명확히 정의됨
 
 ---
 

@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types
 from config import settings
 from models.schemas2 import ItineraryRequest2, ItineraryResponse2, PlaceWithTag, PlaceTag
-from services.validators import validate_all
+from services.validators import adjust_itinerary_with_actual_travel_times
 
 logger = logging.getLogger(__name__)
 
@@ -1163,22 +1163,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                     f"→ 실제 운영시간 내에 방문하도록 조정하세요!"
                 )
 
-        # 5. Travel time 정확도 위반 (NEW)
-        if not validation_results.get("travel_time", {}).get("is_valid", True):
-            violations = validation_results["travel_time"].get("violations", [])
-            if violations:
-                violation_details = []
-                for v in violations[:3]:  # 최대 3개만 표시
-                    if v.get("actual_time") is not None:
-                        violation_details.append(
-                            f"Day {v['day']}: {v.get('from_place', 'N/A')} → {v.get('to_place', 'N/A')} "
-                            f"(예상: {v.get('expected_time', 'N/A')}분, 실제: {v.get('actual_time', 'N/A')}분)"
-                        )
-                if violation_details:
-                    feedback.append(
-                        f"🔴 이동시간 오차 (허용: 10분): {'; '.join(violation_details)} "
-                        f"→ Google Maps 기반 실제 이동시간을 정확히 반영해주세요!"
-                    )
+        # travel_time 피드백 제거됨 - 이제 검증 대신 fetch로 처리됨
 
         # 기존 chat에 피드백 추가하여 새 요청 생성
         # Pydantic 모델은 불변이므로 model_copy 사용
@@ -1357,14 +1342,10 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                     )
 
                     # 재시도 가능 여부 확인
-                    if attempt < max_retries:
-                        logger.info(f"Retrying with enhanced prompt...")
-                        # 위반 사항을 프롬프트에 추가하여 재시도
-                        request = self._enhance_prompt_with_violations(request, validation_results)
-                    else:
-                        # 최대 재시도 횟수 초과 - 생성된 일정을 반환
+                    if attempt == max_retries:
+                        # 3번째 시도 실패 → Routes API actual_time으로 조정하여 반환
                         logger.warning(
-                            f"⚠️ 일정 생성 검증 실패 (최대 재시도 {max_retries}회 초과) - 생성된 일정을 반환합니다"
+                            f"⚠️ 일정 생성 검증 실패 (최대 재시도 {max_retries}회 초과) - Routes API actual_time으로 조정합니다"
                         )
                         logger.warning(
                             f"검증 결과: {json.dumps(validation_results, ensure_ascii=False, indent=2)}"
@@ -1375,14 +1356,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                             missing = validation_results["must_visit"].get("missing", [])
                             logger.warning(f"❌ must_visit 미충족: 누락된 장소 {len(missing)}개 - {missing}")
 
-                        if not validation_results.get("travel_time", {}).get("is_valid", True):
-                            violations = validation_results["travel_time"].get("violations", [])
-                            logger.warning(f"❌ travel_time 위반: {len(violations)}건")
-                            for v in violations[:3]:  # 처음 3개만 로그
-                                logger.warning(
-                                    f"  - Day {v['day']}: {v['from_place']} → {v['to_place']} "
-                                    f"(예상: {v['expected_time']}분, 실제: {v['actual_time']}분, 오차: {v['deviation']}분)"
-                                )
+                        # travel_time 로그 제거됨 - 이제 검증하지 않음
 
                         if not validation_results.get("operating_hours", {}).get("is_valid", True):
                             violations = validation_results["operating_hours"].get("violations", [])
@@ -1392,8 +1366,18 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                             violations = validation_results["rules"].get("violations", [])
                             logger.warning(f"❌ rules 위반: {len(violations)}건")
 
-                        # 예외를 던지지 않고 생성된 일정 반환
-                        return itinerary_response
+                        # actual_time으로 조정
+                        adjusted_itinerary = adjust_itinerary_with_actual_travel_times(
+                            itinerary_response,
+                            validation_results
+                        )
+                        logger.info("✅ travel_time 조정 완료 - 조정된 일정을 반환합니다")
+                        return adjusted_itinerary
+
+                    elif attempt < max_retries:
+                        logger.info(f"Retrying with enhanced prompt...")
+                        # 위반 사항을 프롬프트에 추가하여 재시도
+                        request = self._enhance_prompt_with_violations(request, validation_results)
 
             except ValueError:
                 # 검증 실패 예외는 그대로 전달

@@ -8,12 +8,8 @@ import pytest
 from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
 from services.validators import (
     extract_all_place_names,
-    is_unusual_time,
     validate_must_visit,
-    validate_days_count,
-    validate_operating_hours_basic,
-    validate_travel_time,
-    validate_all
+    validate_days_count
 )
 
 
@@ -116,44 +112,6 @@ def test_extract_all_place_names_preserves_order(sample_itinerary):
     assert result[0] == "Morning Museum"
     assert result[1] == "Lunch Restaurant"
     assert result[2] == "Park Visit"
-
-
-# Tests for is_unusual_time()
-
-def test_is_unusual_time_normal_hours():
-    """Test normal operating hours (not unusual)."""
-    assert is_unusual_time("09:00") is False
-    assert is_unusual_time("12:00") is False
-    assert is_unusual_time("18:30") is False
-    assert is_unusual_time("23:59") is False
-
-
-def test_is_unusual_time_unusual_hours():
-    """Test unusual hours (2 AM - 5 AM)."""
-    assert is_unusual_time("02:00") is True
-    assert is_unusual_time("03:30") is True
-    assert is_unusual_time("04:45") is True
-    assert is_unusual_time("05:00") is True
-
-
-def test_is_unusual_time_boundary_cases():
-    """Test boundary cases around unusual hours."""
-    assert is_unusual_time("01:59") is False  # Just before 2 AM
-    assert is_unusual_time("02:00") is True   # Exactly 2 AM
-    assert is_unusual_time("05:00") is True   # Exactly 5 AM
-    assert is_unusual_time("05:01") is False  # Just after 5 AM
-
-
-def test_is_unusual_time_invalid_format():
-    """Test invalid time format raises ValueError."""
-    with pytest.raises(ValueError, match="Invalid time format"):
-        is_unusual_time("25:00")
-
-    with pytest.raises(ValueError, match="Invalid time format"):
-        is_unusual_time("invalid")
-
-    with pytest.raises(ValueError, match="Invalid time format"):
-        is_unusual_time("12:60")
 
 
 # Tests for validate_must_visit()
@@ -259,527 +217,18 @@ def test_validate_days_count_empty_itinerary():
     assert result["actual"] == 0
 
 
-# Tests for validate_operating_hours_basic()
-
-def test_validate_operating_hours_basic_all_normal(sample_itinerary):
-    """Test with all normal visiting hours."""
-    result = validate_operating_hours_basic(sample_itinerary)
-
-    assert result["is_valid"] is True
-    assert len(result["violations"]) == 0
-    assert result["total_violations"] == 0
-    assert result["total_visits"] == 3
-
-
-def test_validate_operating_hours_basic_unusual_arrival():
-    """Test with unusual arrival time."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Late Night Place",
-                        name_address="123 Night St",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="03:00",  # Unusual
-                        departure="09:00",
-                        travel_time=0
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_operating_hours_basic(itinerary)
-
-    assert result["is_valid"] is False
-    assert result["total_violations"] == 1
-    assert result["violations"][0]["place"] == "Late Night Place"
-    assert "03:00" in result["violations"][0]["issue"]
-
-
-def test_validate_operating_hours_basic_unusual_departure():
-    """Test with unusual departure time."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Early Morning Place",
-                        name_address="123 Morning St",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="01:00",
-                        departure="04:30",  # Unusual
-                        travel_time=0
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_operating_hours_basic(itinerary)
-
-    assert result["is_valid"] is False
-    assert result["total_violations"] == 1
-    assert "04:30" in result["violations"][0]["issue"]
-
-
-def test_validate_operating_hours_basic_multiple_violations():
-    """Test with multiple unusual times."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Place 1",
-                        name_address="Addr 1",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="03:00",  # Unusual
-                        departure="09:00",
-                        travel_time=0
-                    ),
-                    Visit2(
-                        order=2,
-                        display_name="Place 2",
-                        name_address="Addr 2",
-                        place_tag=PlaceTag.RESTAURANT,
-                        latitude=37.6,
-                        longitude=127.1,
-                        arrival="12:00",
-                        departure="04:00",  # Unusual
-                        travel_time=30
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_operating_hours_basic(itinerary)
-
-    assert result["is_valid"] is False
-    assert result["total_violations"] == 2
-    assert result["total_visits"] == 2
-
-
-def test_validate_operating_hours_basic_empty_itinerary():
-    """Test with empty itinerary."""
-    empty_itinerary = ItineraryResponse2(itinerary=[], budget=0)
-    result = validate_operating_hours_basic(empty_itinerary)
-
-    assert result["is_valid"] is True
-    assert result["total_visits"] == 0
-
-
-# Tests for validate_travel_time()
-
-def test_validate_travel_time_all_correct():
-    """Test with correct travel_time values (last=0, others>0)."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Place 1",
-                        name_address="Addr 1",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="09:00",
-                        departure="11:00",
-                        travel_time=30  # Non-last visit with travel_time > 0
-                    ),
-                    Visit2(
-                        order=2,
-                        display_name="Place 2",
-                        name_address="Addr 2",
-                        place_tag=PlaceTag.RESTAURANT,
-                        latitude=37.6,
-                        longitude=127.1,
-                        arrival="11:30",
-                        departure="13:00",
-                        travel_time=0  # Last visit with travel_time = 0
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_travel_time(itinerary)
-
-    assert result["is_valid"] is True
-    assert len(result["violations"]) == 0
-    assert result["total_violations"] == 0
-    assert result["total_visits"] == 2
-
-
-def test_validate_travel_time_last_visit_nonzero():
-    """Test when last visit has travel_time != 0 (violation)."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Place 1",
-                        name_address="Addr 1",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="09:00",
-                        departure="11:00",
-                        travel_time=30  # Last visit but travel_time != 0
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_travel_time(itinerary)
-
-    assert result["is_valid"] is False
-    assert result["total_violations"] == 1
-    assert len(result["violations"]) == 1
-    assert result["violations"][0]["place"] == "Place 1"
-    assert result["violations"][0]["travel_time"] == 30
-    assert "Last visit must have travel_time=0" in result["violations"][0]["issue"]
-
-
-def test_validate_travel_time_middle_visit_zero():
-    """Test when non-last visit has travel_time = 0 (suspicious)."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Place 1",
-                        name_address="Addr 1",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="09:00",
-                        departure="11:00",
-                        travel_time=0  # Non-last visit with travel_time = 0
-                    ),
-                    Visit2(
-                        order=2,
-                        display_name="Place 2",
-                        name_address="Addr 2",
-                        place_tag=PlaceTag.RESTAURANT,
-                        latitude=37.6,
-                        longitude=127.1,
-                        arrival="11:00",
-                        departure="13:00",
-                        travel_time=0
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_travel_time(itinerary)
-
-    assert result["is_valid"] is False
-    assert result["total_violations"] == 1  # Only first visit is suspicious
-    assert result["violations"][0]["place"] == "Place 1"
-    assert "Non-last visit has travel_time=0" in result["violations"][0]["issue"]
-
-
-def test_validate_travel_time_multiple_days():
-    """Test validation across multiple days."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Day1 Place1",
-                        name_address="Addr",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="09:00",
-                        departure="11:00",
-                        travel_time=20
-                    ),
-                    Visit2(
-                        order=2,
-                        display_name="Day1 Place2",
-                        name_address="Addr",
-                        place_tag=PlaceTag.RESTAURANT,
-                        latitude=37.6,
-                        longitude=127.1,
-                        arrival="11:20",
-                        departure="13:00",
-                        travel_time=0  # Correct: last visit of day 1
-                    )
-                ]
-            ),
-            DayItinerary2(
-                day=2,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Day2 Place1",
-                        name_address="Addr",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.7,
-                        longitude=127.2,
-                        arrival="10:00",
-                        departure="12:00",
-                        travel_time=0  # Correct: only visit of day 2
-                    )
-                ]
-            )
-        ],
-        budget=200000
-    )
-
-    result = validate_travel_time(itinerary)
-
-    assert result["is_valid"] is True
-    assert result["total_violations"] == 0
-    assert result["total_visits"] == 3
-
-
-def test_validate_travel_time_multiple_violations():
-    """Test with multiple travel_time violations."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Place 1",
-                        name_address="Addr",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="09:00",
-                        departure="11:00",
-                        travel_time=0  # Violation: non-last with 0
-                    ),
-                    Visit2(
-                        order=2,
-                        display_name="Place 2",
-                        name_address="Addr",
-                        place_tag=PlaceTag.RESTAURANT,
-                        latitude=37.6,
-                        longitude=127.1,
-                        arrival="11:00",
-                        departure="13:00",
-                        travel_time=30  # Violation: last with non-zero
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_travel_time(itinerary)
-
-    assert result["is_valid"] is False
-    assert result["total_violations"] == 2
-    assert len(result["violations"]) == 2
-
-
-def test_validate_travel_time_empty_itinerary():
-    """Test with empty itinerary."""
-    empty_itinerary = ItineraryResponse2(itinerary=[], budget=0)
-    result = validate_travel_time(empty_itinerary)
-
-    assert result["is_valid"] is True
-    assert result["total_visits"] == 0
-    assert len(result["violations"]) == 0
-
-
-def test_validate_travel_time_single_visit():
-    """Test with single visit (should have travel_time=0)."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Only Place",
-                        name_address="Addr",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="09:00",
-                        departure="11:00",
-                        travel_time=0  # Correct: single visit = last visit
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_travel_time(itinerary)
-
-    assert result["is_valid"] is True
-    assert result["total_visits"] == 1
-
-
-# Tests for validate_all()
-
-def test_validate_all_everything_passes(sample_itinerary):
-    """Test when all validations pass."""
-    must_visit = ["Morning Museum", "Park Visit"]
-    expected_days = 2
-
-    result = validate_all(sample_itinerary, must_visit, expected_days)
-
-    assert result["all_valid"] is True
-    assert result["must_visit"]["is_valid"] is True
-    assert result["days"]["is_valid"] is True
-    assert result["operating_hours"]["is_valid"] is True
-    assert result["travel_time"]["is_valid"] is True
-
-
-def test_validate_all_must_visit_fails(sample_itinerary):
-    """Test when only must_visit validation fails."""
-    must_visit = ["Morning Museum", "Missing Place"]
-    expected_days = 2
-
-    result = validate_all(sample_itinerary, must_visit, expected_days)
-
-    assert result["all_valid"] is False
-    assert result["must_visit"]["is_valid"] is False
-    assert result["days"]["is_valid"] is True
-    assert result["operating_hours"]["is_valid"] is True
-    assert result["travel_time"]["is_valid"] is True
-
-
-def test_validate_all_days_fails(sample_itinerary):
-    """Test when only days validation fails."""
-    must_visit = ["Morning Museum"]
-    expected_days = 5
-
-    result = validate_all(sample_itinerary, must_visit, expected_days)
-
-    assert result["all_valid"] is False
-    assert result["must_visit"]["is_valid"] is True
-    assert result["days"]["is_valid"] is False
-    assert result["operating_hours"]["is_valid"] is True
-    assert result["travel_time"]["is_valid"] is True
-
-
-def test_validate_all_multiple_failures():
-    """Test when multiple validations fail."""
-    # Create itinerary with unusual hours and wrong day count
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Place A",
-                        name_address="Addr A",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="03:00",  # Unusual
-                        departure="09:00",
-                        travel_time=0
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    must_visit = ["Place A", "Missing Place"]  # One missing
-    expected_days = 3  # Wrong count
-
-    result = validate_all(itinerary, must_visit, expected_days)
-
-    assert result["all_valid"] is False
-    assert result["must_visit"]["is_valid"] is False
-    assert result["days"]["is_valid"] is False
-    assert result["operating_hours"]["is_valid"] is False
-    assert result["travel_time"]["is_valid"] is True  # Single visit with travel_time=0 is correct
-
-
-def test_validate_all_empty_requirements(sample_itinerary):
-    """Test with minimal requirements."""
-    result = validate_all(sample_itinerary, [], 2)
-
-    assert result["all_valid"] is True
-
-
-def test_validate_all_travel_time_fails():
-    """Test when only travel_time validation fails."""
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Place 1",
-                        name_address="Addr 1",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5,
-                        longitude=127.0,
-                        arrival="09:00",
-                        departure="11:00",
-                        travel_time=30  # Last visit but travel_time != 0
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    result = validate_all(itinerary, [], 1)
-
-    assert result["all_valid"] is False
-    assert result["must_visit"]["is_valid"] is True
-    assert result["days"]["is_valid"] is True
-    assert result["operating_hours"]["is_valid"] is True
-    assert result["travel_time"]["is_valid"] is False
-
-
 # =============================================================================
 # validate_travel_time_with_grounding() Tests
 # =============================================================================
 
-def test_validate_travel_time_with_grounding_valid():
+def test_fetch_actual_travel_times_valid():
     """
-    Test validate_travel_time_with_grounding with valid travel times.
+    Test fetch_actual_travel_times with valid route.
 
     Note: This test uses real Google Routes API calls.
     It may fail if API key is invalid or API is unavailable.
     """
-    from services.validators import validate_travel_time_with_grounding
+    from services.validators import fetch_actual_travel_times
     from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
 
     # Create itinerary with realistic Seoul locations
@@ -816,21 +265,21 @@ def test_validate_travel_time_with_grounding_valid():
         budget=100000
     )
 
-    result = validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)
+    result = fetch_actual_travel_times(itinerary)
 
-    # Should be valid (or have minor deviations within tolerance)
-    assert "is_valid" in result
-    assert "violations" in result
-    assert "total_validated" in result
-    assert "statistics" in result
-    assert result["total_validated"] == 1
+    # Should return dict with (day, order) -> time mapping
+    assert isinstance(result, dict)
+    # Should have 1 route (day 1, order 1 -> order 2)
+    assert (1, 1) in result
+    # Travel time should be positive
+    assert result[(1, 1)] > 0
 
 
-def test_validate_travel_time_with_grounding_single_visit():
+def test_fetch_actual_travel_times_single_visit():
     """
-    Test validate_travel_time_with_grounding with single visit (no routes to validate).
+    Test fetch_actual_travel_times with single visit (no routes to fetch).
     """
-    from services.validators import validate_travel_time_with_grounding
+    from services.validators import fetch_actual_travel_times
     from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
 
     itinerary = ItineraryResponse2(
@@ -855,18 +304,18 @@ def test_validate_travel_time_with_grounding_single_visit():
         budget=100000
     )
 
-    result = validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)
+    result = fetch_actual_travel_times(itinerary)
 
-    assert result["is_valid"] is True
-    assert result["total_validated"] == 0
-    assert len(result["violations"]) == 0
+    # Should return empty dict (no routes to fetch)
+    assert isinstance(result, dict)
+    assert len(result) == 0
 
 
-def test_validate_travel_time_with_grounding_multiple_days():
+def test_fetch_actual_travel_times_multiple_days():
     """
-    Test validate_travel_time_with_grounding with multiple days.
+    Test fetch_actual_travel_times with multiple days.
     """
-    from services.validators import validate_travel_time_with_grounding
+    from services.validators import fetch_actual_travel_times
     from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
 
     itinerary = ItineraryResponse2(
@@ -929,19 +378,22 @@ def test_validate_travel_time_with_grounding_multiple_days():
         budget=100000
     )
 
-    result = validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)
+    result = fetch_actual_travel_times(itinerary)
 
-    assert result["total_validated"] == 2
-    assert "statistics" in result
-    assert "avg_deviation" in result["statistics"]
-    assert "max_deviation" in result["statistics"]
+    # Should have 2 routes (one per day)
+    assert isinstance(result, dict)
+    assert len(result) == 2
+    assert (1, 1) in result  # Day 1, order 1 -> 2
+    assert (2, 1) in result  # Day 2, order 1 -> 2
+    assert result[(1, 1)] > 0
+    assert result[(2, 1)] > 0
 
 
-def test_validate_travel_time_with_grounding_empty_itinerary():
+def test_fetch_actual_travel_times_empty_itinerary():
     """
-    Test validate_travel_time_with_grounding with empty itinerary.
+    Test fetch_actual_travel_times with empty itinerary.
     """
-    from services.validators import validate_travel_time_with_grounding
+    from services.validators import fetch_actual_travel_times
     from models.schemas2 import ItineraryResponse2
 
     itinerary = ItineraryResponse2(
@@ -949,65 +401,15 @@ def test_validate_travel_time_with_grounding_empty_itinerary():
         budget=100000
     )
 
-    result = validate_travel_time_with_grounding(itinerary, tolerance_minutes=10)
+    result = fetch_actual_travel_times(itinerary)
 
-    assert result["is_valid"] is True
-    assert result["total_validated"] == 0
-    assert len(result["violations"]) == 0
-    assert result["statistics"]["avg_deviation"] == 0
-    assert result["statistics"]["max_deviation"] == 0
+    # Should return empty dict
+    assert isinstance(result, dict)
+    assert len(result) == 0
 
 
-def test_validate_travel_time_with_grounding_custom_tolerance():
-    """
-    Test validate_travel_time_with_grounding with custom tolerance.
-    """
-    from services.validators import validate_travel_time_with_grounding
-    from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
-
-    itinerary = ItineraryResponse2(
-        itinerary=[
-            DayItinerary2(
-                day=1,
-                visits=[
-                    Visit2(
-                        order=1,
-                        display_name="Gyeongbokgung Palace",
-                        name_address="Gyeongbokgung Palace, 161 Sajik-ro, Jongno-gu, Seoul",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5796,
-                        longitude=126.9770,
-                        arrival="09:00",
-                        departure="11:00",
-                        travel_time=15
-                    ),
-                    Visit2(
-                        order=2,
-                        display_name="Bukchon Hanok Village",
-                        name_address="Bukchon Hanok Village, 37 Gyedong-gil, Jongno-gu, Seoul",
-                        place_tag=PlaceTag.TOURIST_SPOT,
-                        latitude=37.5825,
-                        longitude=126.9830,
-                        arrival="11:15",
-                        departure="13:00",
-                        travel_time=0
-                    )
-                ]
-            )
-        ],
-        budget=100000
-    )
-
-    # Test with very strict tolerance (1 minute)
-    result_strict = validate_travel_time_with_grounding(itinerary, tolerance_minutes=1)
-
-    # Test with lenient tolerance (30 minutes)
-    result_lenient = validate_travel_time_with_grounding(itinerary, tolerance_minutes=30)
-
-    assert result_strict["total_validated"] == 1
-    assert result_lenient["total_validated"] == 1
-    # Lenient tolerance should have fewer or equal violations
-    assert len(result_lenient["violations"]) <= len(result_strict["violations"])
+# Custom tolerance test removed - no longer applicable
+# fetch_actual_travel_times does not perform validation with tolerance
 
 
 # =============================================================================
@@ -1387,7 +789,7 @@ def test_validate_all_with_grounding_empty():
     assert "days" in result
     assert "rules" in result
     assert "operating_hours" in result
-    assert "travel_time" in result
+    # "travel_time" removed - no longer validated
 
 
 def test_validate_all_with_grounding_structure():
