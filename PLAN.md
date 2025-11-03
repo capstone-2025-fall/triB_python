@@ -1,9 +1,10 @@
 # 일정 생성 프롬프트 완전 재작성 계획 - V2 시스템
 
 ## 개요
-**PR #1, #2, #3, #4, #5 완료됨** ✅
+**PR #1, #2, #3, #4, #5, #6 완료됨** ✅
 
 기존 3단계 우선순위 시스템을 **5단계 우선순위 시스템**으로 전면 재작성 완료!
+travel_time 검증 로직 추가 완료!
 
 ### 주요 변경사항
 - **5단계 우선순위 시스템** 도입 (기존 3단계 → 5단계)
@@ -144,50 +145,44 @@
 
 ---
 
-## PR #6: travel_time 계산 로직 명확화 및 검증 강화
+## PR #6: travel_time 계산 로직 명확화 및 검증 강화 ✅
 
 **목표**: travel_time 필드의 정의를 명확히 하고 검증 로직 추가
 
-### Commit 6.1: travel_time 검증 함수 추가
-- **파일**: `services/validators.py`
+### Commit 6.1-6.2: travel_time 검증 함수 추가 및 validate_all 통합 ✅
+- **커밋**: 860a6ae
+- **파일**: `services/validators.py`, `tests/test_validators.py`
 - **변경사항**:
   - `validate_travel_time()` 함수 추가:
-    ```python
-    def validate_travel_time(itinerary: ItineraryResponse2) -> dict:
-        """travel_time 계산 검증"""
-        violations = []
-        for day in itinerary.itinerary:
-            visits = day.visits
-            if len(visits) == 0:
-                continue
+    - 마지막 visit의 travel_time = 0 검증
+    - 중간 visit들의 travel_time > 0 권장 (0이면 suspicious)
+    - 위반 사항 상세 정보 반환
+  - `validate_all()` 함수에 travel_time 검증 통합
+  - 7개의 단위 테스트 추가:
+    - test_validate_travel_time_all_correct
+    - test_validate_travel_time_last_visit_nonzero
+    - test_validate_travel_time_middle_visit_zero
+    - test_validate_travel_time_multiple_days
+    - test_validate_travel_time_multiple_violations
+    - test_validate_travel_time_empty_itinerary
+    - test_validate_travel_time_single_visit
+  - validate_all() 테스트 업데이트 (travel_time 검증 포함)
+  - sample_itinerary fixture 수정 (올바른 travel_time 값)
+- **테스트 결과**: 35/35 통과 ✅
+- **상태**: 완료
 
-            # 마지막 방문의 travel_time은 0이어야 함
-            if visits[-1].travel_time != 0:
-                violations.append(f"Day {day.day} 마지막 방문의 travel_time이 0이 아님")
-
-            # 중간 방문들은 travel_time > 0 권장
-            for i, visit in enumerate(visits[:-1]):
-                if visit.travel_time == 0 and i < len(visits) - 1:
-                    violations.append(f"Day {day.day}, {visit.display_name} → 다음 장소: travel_time이 0")
-
-        return {"is_valid": len(violations) == 0, "violations": violations}
-    ```
-- **테스트**: `tests/test_validators.py`에 단위 테스트 추가
-- **상태**: 대기 중
-
-### Commit 6.2: validate_all에 travel_time 검증 통합
-- **파일**: `services/validators.py`
-- **변경사항**:
-  - `validate_all()` 함수에 `validate_travel_time()` 추가
-  - 검증 결과를 딕셔너리에 포함
-- **상태**: 대기 중
-
-### Commit 6.3: E2E 테스트에 travel_time 검증 추가
+### Commit 6.3: E2E 테스트에 travel_time 검증 명시적 추가 ✅
+- **커밋**: 860a6ae (동일 커밋)
 - **파일**: `tests/test_e2e_itinerary2.py`
 - **변경사항**:
-  - 생성된 일정의 travel_time 검증 추가
-  - 보고서에 travel_time 검증 섹션 추가
-- **상태**: 대기 중
+  - validate_travel_time() import 추가
+  - operating hours 검증 후 travel_time 검증 추가:
+    - 총 방문지 수 출력
+    - 위반 사항 상세 표시 (day, place, order, issue)
+    - 검증 결과 (PASS/FAIL)
+  - validate_all() 호출에 travel_time 검증 자동 포함
+- **테스트 결과**: E2E 테스트 통과 (101.44초) ✅
+- **상태**: 완료
 
 ---
 
@@ -250,7 +245,7 @@
 
 1. **PR #4** (핵심) ✅ - 5단계 우선순위 프롬프트 전면 재작성
 2. **PR #5** (기능 강화) ✅ - 숙소 추천 기능 강화
-3. **PR #6** (검증) - travel_time 검증 강화
+3. **PR #6** (검증) ✅ - travel_time 검증 강화
 4. **PR #7** (검증) - 하루 일정 시간 검증
 
 ---
@@ -288,9 +283,9 @@
 - [ ] 숙소 정보(좌표, 주소)가 정확함
 
 ### PR #6 검증 기준
-- [ ] travel_time 검증 단위 테스트 통과
-- [ ] 마지막 방문의 travel_time이 0임을 검증
-- [ ] E2E 테스트에 travel_time 검증 통합
+- [x] travel_time 검증 단위 테스트 통과
+- [x] 마지막 방문의 travel_time이 0임을 검증
+- [x] E2E 테스트에 travel_time 검증 통합
 
 ### PR #7 검증 기준
 - [ ] 하루 일정 시간 계산 정확함
