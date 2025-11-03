@@ -589,6 +589,235 @@ Result:
 ```
 
 ---
+
+## 출력 형식 (Output Format)
+
+### JSON 구조
+
+**중요**: 다음 JSON 구조를 정확히 따르세요. budget은 itinerary 배열 밖에 있어야 합니다!
+
+```json
+{{
+  "itinerary": [
+    {{
+      "day": 1,
+      "visits": [
+        {{
+          "order": 1,
+          "display_name": "오사카 성",
+          "name_address": "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본",
+          "place_tag": "TOURIST_SPOT",
+          "latitude": 34.687315,
+          "longitude": 135.526199,
+          "arrival": "09:00",
+          "departure": "11:30",
+          "travel_time": 30
+        }},
+        {{
+          "order": 2,
+          "display_name": "도톤보리",
+          "name_address": "도톤보리 Dotonbori, Chuo Ward, Osaka, 542-0071 일본",
+          "place_tag": "TOURIST_SPOT",
+          "latitude": 34.668736,
+          "longitude": 135.501297,
+          "arrival": "12:00",
+          "departure": "14:00",
+          "travel_time": 0
+        }}
+      ]
+    }},
+    {{
+      "day": 2,
+      "visits": [...]
+    }}
+  ],
+  "budget": 500000
+}}
+```
+
+### JSON 필드 상세 설명
+
+**최상위 구조**:
+- `itinerary` (배열): 모든 일정 정보를 담은 배열
+- `budget` (정수): 1인당 예상 예산 (원화 기준) - **itinerary 배열 밖에 위치**
+
+**day 객체 (itinerary 배열의 각 요소)**:
+- `day` (정수): 1부터 시작하는 일차 번호 (1, 2, 3, ...)
+- `visits` (배열): 해당 날짜의 방문 장소들
+
+**visit 객체 (visits 배열의 각 요소)**:
+
+1. **order** (정수):
+   - 각 day 내에서 1부터 시작하는 방문 순서
+   - 예: Visit 1, Visit 2, Visit 3, ...
+
+2. **display_name** (문자열):
+   - 표시용 장소명만 (주소 제외)
+   - 형식: "장소명"
+   - 예시: "오사카 성", "유니버설 스튜디오 재팬", "도톤보리"
+   - 간결하고 명확한 이름 사용
+
+3. **name_address** (문자열):
+   - 장소명 + 한칸 공백 + 상세 주소
+   - 형식: "장소명 주소"
+   - 예시: "유니버설 스튜디오 재팬 2 Chome-1-33 Sakurajima, Konohana Ward, Osaka, 554-0031 일본"
+   - 예시: "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본"
+   - **반드시 장소명과 주소 사이에 한칸 공백을 넣으세요**
+
+4. **place_tag** (문자열, 대문자):
+   - 가능한 값: "TOURIST_SPOT", "HOME", "RESTAURANT", "CAFE", "OTHER"
+   - 할당 규칙:
+     - **TOURIST_SPOT**: 관광지, 박물관, 테마파크, 사원, 성, 전망대 등
+     - **HOME**: 호텔, 게스트하우스, 숙소, 리조트 등
+     - **RESTAURANT**: 식당, 레스토랑, 음식점, 시장 (음식 중심) 등
+     - **CAFE**: 카페, 디저트 가게, 베이커리 등
+     - **OTHER**: 위 분류에 맞지 않는 경우 (공항, 역 등)
+
+5. **latitude, longitude** (소수):
+   - 소수점 형식의 정확한 좌표 (소수점 6자리까지)
+   - 예: latitude: 34.687315, longitude: 135.526199
+   - Google Maps에서 조회한 정확한 좌표 사용
+
+6. **arrival** (문자열):
+   - 해당 장소에 도착하는 시간
+   - 24시간 형식 "HH:MM" (예: "09:00", "14:30")
+   - 첫 번째 visit: 하루 일정 시작 시간 (예: 09:00)
+   - 이후 visit: 이전 장소의 departure + travel_time으로 계산
+
+7. **departure** (문자열):
+   - 해당 장소에서 떠나는 시간
+   - 24시간 형식 "HH:MM" (예: "11:30", "20:00")
+   - arrival + 해당 장소 체류시간으로 계산
+   - 체류시간은 3-A의 가이드라인을 참고하세요
+   - 예: 오사카 성 arrival "09:00" → 2.5시간 체류 → departure "11:30"
+
+8. **travel_time** (정수):
+   - 다음 장소로 가는 이동시간 (분 단위)
+   - **첫 번째 visit**: 첫 번째 장소 → 두 번째 장소 이동시간
+   - **중간 visit**: 현재 장소 → 다음 장소 이동시간
+   - **마지막 visit**: 0 (다음 장소가 없으므로)
+   - 예: Visit 1 departure "11:30", travel_time 30 → Visit 2 arrival "12:00"
+
+### travel_time 필드 정의 (매우 중요)
+
+**계산 규칙**:
+- **첫 번째 방문의 travel_time**: 첫 번째 장소 → 두 번째 장소 이동시간
+- **중간 방문의 travel_time**: 현재 장소 → 다음 장소 이동시간
+- **마지막 방문의 travel_time**: 0
+
+**계산 공식**:
+```
+visit[i+1].arrival = visit[i].departure + visit[i].travel_time
+```
+
+**예시** (3개 visit):
+```json
+{{
+  "visits": [
+    {{
+      "order": 1,
+      "display_name": "오사카 성",
+      "departure": "11:30",
+      "travel_time": 30   // 오사카 성 → 도톤보리 (30분)
+    }},
+    {{
+      "order": 2,
+      "display_name": "도톤보리",
+      "arrival": "12:00",  // 11:30 + 30분
+      "departure": "14:00",
+      "travel_time": 20   // 도톤보리 → 난바 (20분)
+    }},
+    {{
+      "order": 3,
+      "display_name": "난바",
+      "arrival": "14:20",  // 14:00 + 20분
+      "departure": "16:00",
+      "travel_time": 0    // 마지막 방문
+    }}
+  ]
+}}
+```
+
+### 예시 JSON (2일 일정, HOME 포함)
+
+```json
+{{
+  "itinerary": [
+    {{
+      "day": 1,
+      "visits": [
+        {{
+          "order": 1,
+          "display_name": "크로스 호텔 오사카",
+          "name_address": "크로스 호텔 오사카 2-5-15 Shinsaibashi-suji, Chuo Ward, Osaka, 542-0085 일본",
+          "place_tag": "HOME",
+          "latitude": 34.672042,
+          "longitude": 135.502014,
+          "arrival": "09:00",
+          "departure": "09:30",
+          "travel_time": 20
+        }},
+        {{
+          "order": 2,
+          "display_name": "오사카 성",
+          "name_address": "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본",
+          "place_tag": "TOURIST_SPOT",
+          "latitude": 34.687315,
+          "longitude": 135.526199,
+          "arrival": "09:50",
+          "departure": "12:20",
+          "travel_time": 30
+        }},
+        {{
+          "order": 3,
+          "display_name": "이치란 라멘 도톤보리점",
+          "name_address": "이치란 라멘 도톤보리점 1-4-16 Dotonbori, Chuo Ward, Osaka, 542-0071 일본",
+          "place_tag": "RESTAURANT",
+          "latitude": 34.668975,
+          "longitude": 135.501123,
+          "arrival": "12:50",
+          "departure": "14:00",
+          "travel_time": 15
+        }},
+        {{
+          "order": 4,
+          "display_name": "크로스 호텔 오사카",
+          "name_address": "크로스 호텔 오사카 2-5-15 Shinsaibashi-suji, Chuo Ward, Osaka, 542-0085 일본",
+          "place_tag": "HOME",
+          "latitude": 34.672042,
+          "longitude": 135.502014,
+          "arrival": "14:15",
+          "departure": "14:15",
+          "travel_time": 0
+        }}
+      ]
+    }},
+    {{
+      "day": 2,
+      "visits": [...]
+    }}
+  ],
+  "budget": 450000
+}}
+```
+
+### 필수 준수 사항
+
+1. **순수 JSON만 반환하세요**:
+   - 마크다운 코드 블록(```)이나 설명 텍스트 없이 JSON만 출력하세요
+   - ❌ 잘못된 예: ```json ... ```
+   - ⭕ 올바른 예: {{ "itinerary": [...], "budget": 500000 }}
+
+2. **JSON 구조를 정확히 지키세요**:
+   - 최상위는 객체이며, "itinerary" 배열과 "budget" 숫자 두 개의 속성만 가집니다
+   - budget은 itinerary 배열 밖에 위치해야 합니다 (배열 안에 넣지 마세요)
+
+3. **유효한 JSON 형식**:
+   - 쉼표, 중괄호, 대괄호를 정확히 사용하세요
+   - 마지막 요소 뒤에 쉼표를 붙이지 마세요
+   - 문자열은 큰따옴표(")로 감싸세요
+
+---
 """
 
         return prompt
