@@ -223,12 +223,12 @@ class ItineraryGeneratorService2:
 - places 장소는 사용자가 관심 있어하는 장소이므로 최대한 포함하세요
 
 **장소 선택 프로세스**:
-1. **places 리스트 우선 선택 (70% 이상)**:
+1. **places 리스트 우선 선택**:
    - "고려 중인 장소 목록 (places)"에서 적절한 장소를 우선 선택
    - 채팅 내용에서 파악한 여행 스타일에 맞는 장소를 places에서 선택
    - 예: "여유로운 여행" + places에 CAFE/PARK → 이 장소들 우선 포함
 
-2. **부족한 장소는 Gemini가 추천 (30% 이하)**:
+2. **부족한 장소는 Gemini가 추천**:
    - places에 적합한 장소가 없거나 부족하면 Google Maps로 새 장소 검색
    - 예: "맛있는 라멘 가게" 요청 + places에 라멘집 없음
      → Google Maps로 해당 지역 유명 라멘 가게 추천
@@ -237,9 +237,6 @@ class ItineraryGeneratorService2:
    - places의 장소를 일정에 사용할 때는 해당 place_tag 그대로 사용
    - Gemini가 새로 추천하는 장소는 가장 적절한 place_tag 선택
    - 가능한 값: TOURIST_SPOT, HOME, RESTAURANT, CAFE, OTHER
-
-**검증**:
-- (places에서 선택한 장소 수 / 전체 방문 장소 수) ≥ 70%
 
 ---
 
@@ -663,7 +660,7 @@ Google Maps Grounding Tool을 사용하여 다음 정보를 **반드시** 조회
 1-D에서 추론한 이동 수단을 Google Maps 교통수단으로 매핑하세요:
 
 **DRIVE** (자동차):
-- chat에서 "렌터카", "자동차", "차 빌려서" 언급 시
+- chat에서 "렌터카", "자동차", "차 빌려서", "운전" 언급 시
 - 자동차 경로 기반 이동시간 계산
 - 주차 시간 추가 고려 (5-10분)
 
@@ -965,8 +962,6 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 - [ ] **rule 모두 준수했는가?**
   - 각 규칙이 일정에 정확히 반영됨
   - 시간 제약, 활동 요구, 장소 우선순위, 이동 제약 모두 적용
-- [ ] **places 70% 이상 사용했는가?**
-  - (places에서 선택한 장소 수 / 전체 방문 장소 수) ≥ 70%
 
 ### 🟠 Priority 2 검증 (HIGHLY RECOMMENDED - 최대한 준수)
 - [ ] **모든 운영시간 내 방문인가?**
