@@ -190,7 +190,8 @@ def validate_days_count(
 
 
 def fetch_actual_travel_times(
-    itinerary: ItineraryResponse2
+    itinerary: ItineraryResponse2,
+    travel_mode: str = "TRANSIT"
 ) -> Dict[Tuple[int, int], int]:
     """
     Fetch actual travel times from Google Routes API v2.
@@ -200,6 +201,9 @@ def fetch_actual_travel_times(
 
     Args:
         itinerary: The generated itinerary response
+        travel_mode: Travel mode for Routes API. Valid values:
+                    "DRIVE", "TRANSIT", "WALK", "BICYCLE"
+                    Defaults to "TRANSIT" (PR#13)
 
     Returns:
         Dictionary mapping (day, from_order) to actual travel time in minutes:
@@ -215,7 +219,8 @@ def fetch_actual_travel_times(
         if no routes could be fetched.
 
     Note:
-        - Uses DRIVE mode with TRAFFIC_AWARE routing preference
+        - PR#13: Uses inferred travel_mode from chat messages
+        - Routing preference: TRAFFIC_AWARE (for DRIVE), best route (others)
         - Skips last visit of each day (no next destination)
         - Requires valid google_maps_api_key in settings
         - Errors are logged but do not prevent other routes from being fetched
@@ -256,8 +261,8 @@ def fetch_actual_travel_times(
                             }
                         }
                     },
-                    "travelMode": "DRIVE",
-                    "routingPreference": "TRAFFIC_AWARE",
+                    "travelMode": travel_mode,
+                    "routingPreference": "TRAFFIC_AWARE" if travel_mode == "DRIVE" else "TRAFFIC_UNAWARE",
                     "computeAlternativeRoutes": False,
                     "languageCode": "ko-KR",
                     "units": "METRIC"
