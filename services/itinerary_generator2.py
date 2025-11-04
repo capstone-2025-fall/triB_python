@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types
 from config import settings
 from models.schemas2 import ItineraryRequest2, ItineraryResponse2, PlaceWithTag, PlaceTag
-from services.validators import adjust_itinerary_with_actual_travel_times
+# PR#9: adjust_itinerary_with_actual_travel_times import 제거됨
 
 logger = logging.getLogger(__name__)
 
@@ -1366,13 +1366,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                             violations = validation_results["rules"].get("violations", [])
                             logger.warning(f"❌ rules 위반: {len(violations)}건")
 
-                        # actual_time으로 조정
-                        adjusted_itinerary = adjust_itinerary_with_actual_travel_times(
-                            itinerary_response,
-                            validation_results
-                        )
-                        logger.info("✅ travel_time 조정 완료 - 조정된 일정을 반환합니다")
-                        return adjusted_itinerary
+                        # PR#9: 조정 로직 제거 - 검증 실패 시 원본 일정 반환
+                        logger.warning("⚠️ 최대 재시도 초과 - 검증 실패한 일정을 반환합니다")
+                        return itinerary_response
 
                     elif attempt < max_retries:
                         logger.info(f"Retrying with enhanced prompt...")

@@ -633,128 +633,153 @@ def minutes_to_time(minutes: int) -> str:
 
 
 # ==================== Itinerary Adjustment Functions ====================
+# (기존 adjust_itinerary_with_actual_travel_times 함수는 PR#9에서 제거됨)
+# 새로운 함수들은 아래에 추가됩니다.
 
-def adjust_itinerary_with_actual_travel_times(
+
+def update_travel_times_from_routes(
     itinerary: ItineraryResponse2,
-    validation_results: Dict[str, Any],
+    routes_data: Dict[Tuple[int, int], int]
+) -> ItineraryResponse2:
+    """
+    Update travel_time fields in itinerary with actual Routes API data.
+
+    This function only updates the travel_time field values and does NOT
+    adjust arrival/departure times. Time adjustment should be done separately
+    using adjust_schedule_with_new_travel_times().
+
+    Args:
+        itinerary: The itinerary to update
+        routes_data: Dictionary mapping (day, from_order) to actual travel time (minutes)
+                    Example: {(1, 1): 15, (1, 2): 20, (2, 1): 10}
+                    This is the return value from fetch_actual_travel_times()
+
+    Returns:
+        Updated itinerary with travel_time fields replaced (deep copy)
+
+    Note:
+        - Creates a deep copy to avoid modifying the original itinerary
+        - Only updates visits that exist in routes_data
+        - Visits not in routes_data keep their original travel_time
+        - Does NOT modify arrival/departure times
+    """
+    import copy
+
+    # Create deep copy to avoid modifying original
+    updated = copy.deepcopy(itinerary)
+
+    # Update travel_time values from routes_data
+    for day in updated.itinerary:
+        for visit in day.visits:
+            key = (day.day, visit.order)
+
+            if key in routes_data:
+                # Replace with actual travel time from Routes API
+                visit.travel_time = routes_data[key]
+
+    return updated
+
+
+def adjust_schedule_with_new_travel_times(
+    itinerary: ItineraryResponse2,
     min_stay_minutes: int = 30
 ) -> ItineraryResponse2:
     """
-    Adjust itinerary travel times using actual Routes API data from validation.
+    Adjust arrival/departure times based on updated travel_time values.
 
-    This function is used on the 3rd attempt (2nd retry) when validation fails.
-    It replaces itinerary travel_time values with actual_time from Routes API
-    and recalculates arrival/departure times to maintain stay durations.
+    This function should be called AFTER update_travel_times_from_routes().
+    It recalculates arrival/departure times to ensure consistency with the
+    new travel_time values while prioritizing keeping arrival times fixed.
 
     Strategy:
-    1. Replace travel_time with actual_time from validation violations
-    2. Keep arrival times fixed when possible
-    3. Adjust departure times based on new travel_time
-    4. If stay duration becomes too short (< min_stay_minutes), adjust arrival times forward
+    1. Keep arrival times fixed when possible (Priority #1)
+    2. Adjust only departure times to match travel_time
+    3. If stay duration becomes too short (< min_stay_minutes):
+       - Push forward the next visit's arrival time
+       - Propagate changes to all subsequent visits (cascade adjustment)
 
     Args:
-        itinerary: The generated itinerary response to adjust
-        validation_results: Results from validate_all_with_grounding()
+        itinerary: The itinerary with updated travel_time values
         min_stay_minutes: Minimum stay duration at each place (default: 30)
 
     Returns:
-        Adjusted itinerary with updated travel_time and recalculated arrival/departure
+        Adjusted itinerary with recalculated arrival/departure times (deep copy)
 
     Note:
-        - Only adjusts violations where actual_time is not None
-        - Violations with actual_time=None (API errors) are skipped
         - Creates a deep copy to avoid modifying the original itinerary
+        - Processes each day independently
+        - Ensures stay_duration = departure - arrival >= min_stay_minutes
+        - Cascades adjustments forward when arrival times must be changed
     """
     import copy
 
     # Create deep copy to avoid modifying original
     adjusted = copy.deepcopy(itinerary)
 
-    # Extract travel_time violations
-    travel_time_violations = validation_results.get("travel_time", {}).get("violations", [])
-
-    if not travel_time_violations:
-        # No violations to adjust
-        return adjusted
-
-    # Step 1: Build a map of (day, from_order) -> actual_time for quick lookup
-    actual_time_map = {}
-    for violation in travel_time_violations:
-        # Skip violations without actual_time (API errors)
-        if violation.get("actual_time") is None:
-            continue
-
-        day = violation["day"]
-        from_order = violation["from_order"]
-        actual_time = violation["actual_time"]
-
-        actual_time_map[(day, from_order)] = actual_time
-
-    # Step 2: Update travel_time values with actual_time
-    for day in adjusted.itinerary:
-        visits = day.visits
-
-        for i, visit in enumerate(visits):
-            key = (day.day, visit.order)
-
-            if key in actual_time_map:
-                # Replace with actual travel time from Routes API
-                visit.travel_time = actual_time_map[key]
-
-    # Step 3: Recalculate arrival/departure times
+    # Process each day independently
     for day in adjusted.itinerary:
         visits = day.visits
 
         if len(visits) <= 1:
+            # Single visit or empty - no adjustment needed
             continue
 
         # Process visits in forward order
-        for i in range(len(visits) - 1):
+        for i in range(len(visits)):
             current_visit = visits[i]
-            next_visit = visits[i + 1]
 
-            # Calculate required departure time to arrive at next visit on time
-            current_arrival_min = time_to_minutes(current_visit.arrival)
-            next_arrival_min = time_to_minutes(next_visit.arrival)
-            travel_time = current_visit.travel_time
+            # Calculate stay duration
+            arrival_min = time_to_minutes(current_visit.arrival)
+            departure_min = time_to_minutes(current_visit.departure)
+            stay_duration = departure_min - arrival_min
 
-            # Required departure = next_arrival - travel_time
-            required_departure_min = next_arrival_min - travel_time
+            # Ensure minimum stay duration
+            if stay_duration < min_stay_minutes:
+                # Adjust departure to meet minimum stay
+                departure_min = arrival_min + min_stay_minutes
+                current_visit.departure = minutes_to_time(departure_min)
 
-            # Check if we can maintain minimum stay duration
-            earliest_departure_min = current_arrival_min + min_stay_minutes
+            # If this is not the last visit, adjust next visit's arrival
+            if i < len(visits) - 1:
+                next_visit = visits[i + 1]
 
-            if required_departure_min < earliest_departure_min:
-                # Cannot maintain minimum stay duration
-                # Adjust both departure and next arrival
-                current_visit.departure = minutes_to_time(earliest_departure_min)
-                new_next_arrival_min = earliest_departure_min + travel_time
-                next_visit.arrival = minutes_to_time(new_next_arrival_min)
+                # Calculate expected arrival at next visit
+                expected_next_arrival_min = departure_min + current_visit.travel_time
 
-                # Propagate changes to subsequent visits
-                for j in range(i + 1, len(visits) - 1):
-                    propagate_visit = visits[j]
-                    propagate_next = visits[j + 1]
+                # Get current next arrival
+                next_arrival_min = time_to_minutes(next_visit.arrival)
 
-                    # Maintain minimum stay at this visit
-                    propagate_arrival_min = time_to_minutes(propagate_visit.arrival)
-                    propagate_departure_min = propagate_arrival_min + min_stay_minutes
-                    propagate_visit.departure = minutes_to_time(propagate_departure_min)
+                # Check if adjustment is needed
+                if expected_next_arrival_min != next_arrival_min:
+                    # Calculate required departure to arrive on time
+                    required_departure_min = next_arrival_min - current_visit.travel_time
 
-                    # Update next visit's arrival
-                    propagate_next_arrival_min = propagate_departure_min + propagate_visit.travel_time
-                    propagate_next.arrival = minutes_to_time(propagate_next_arrival_min)
+                    # Check if we can maintain minimum stay
+                    if required_departure_min >= arrival_min + min_stay_minutes:
+                        # Can maintain arrival - just adjust departure
+                        current_visit.departure = minutes_to_time(required_departure_min)
+                    else:
+                        # Cannot maintain minimum stay - must push forward next arrival
+                        # Set departure to minimum stay
+                        current_visit.departure = minutes_to_time(arrival_min + min_stay_minutes)
 
-                # For last visit, just update departure to maintain min stay
-                last_visit = visits[-1]
-                last_arrival_min = time_to_minutes(last_visit.arrival)
-                last_departure_min = last_arrival_min + min_stay_minutes
-                last_visit.departure = minutes_to_time(last_departure_min)
+                        # Push forward next visit and cascade
+                        new_next_arrival_min = arrival_min + min_stay_minutes + current_visit.travel_time
+                        next_visit.arrival = minutes_to_time(new_next_arrival_min)
 
-                # Stop processing this day since we've propagated all changes
-                break
-            else:
-                # Can maintain arrival time - just adjust departure
-                current_visit.departure = minutes_to_time(required_departure_min)
+                        # Cascade adjustment to all subsequent visits
+                        for j in range(i + 1, len(visits)):
+                            cascade_visit = visits[j]
+                            cascade_arrival_min = time_to_minutes(cascade_visit.arrival)
+
+                            # Ensure minimum stay at this visit
+                            cascade_departure_min = cascade_arrival_min + min_stay_minutes
+                            cascade_visit.departure = minutes_to_time(cascade_departure_min)
+
+                            # Update next visit's arrival if not the last
+                            if j < len(visits) - 1:
+                                cascade_next = visits[j + 1]
+                                cascade_next_arrival_min = cascade_departure_min + cascade_visit.travel_time
+                                cascade_next.arrival = minutes_to_time(cascade_next_arrival_min)
 
     return adjusted

@@ -9,7 +9,11 @@ from models.schemas2 import ItineraryResponse2, DayItinerary2, Visit2, PlaceTag
 from services.validators import (
     extract_all_place_names,
     validate_must_visit,
-    validate_days_count
+    validate_days_count,
+    time_to_minutes,
+    minutes_to_time,
+    update_travel_times_from_routes,
+    adjust_schedule_with_new_travel_times
 )
 
 
@@ -840,3 +844,418 @@ def test_validate_all_with_grounding_structure():
     assert isinstance(result["all_valid"], bool)
     assert result["must_visit"]["is_valid"] is True
     assert result["days"]["is_valid"] is True
+
+
+# ==================== Time Utility Functions Tests ====================
+
+
+def test_time_to_minutes_normal():
+    """Test time_to_minutes with normal time strings."""
+    assert time_to_minutes("00:00") == 0
+    assert time_to_minutes("01:00") == 60
+    assert time_to_minutes("09:30") == 570
+    assert time_to_minutes("12:00") == 720
+    assert time_to_minutes("23:59") == 1439
+
+
+def test_time_to_minutes_edge_cases():
+    """Test time_to_minutes with edge cases."""
+    assert time_to_minutes("00:01") == 1
+    assert time_to_minutes("00:59") == 59
+    assert time_to_minutes("23:00") == 1380
+
+
+def test_minutes_to_time_normal():
+    """Test minutes_to_time with normal minute values."""
+    assert minutes_to_time(0) == "00:00"
+    assert minutes_to_time(60) == "01:00"
+    assert minutes_to_time(570) == "09:30"
+    assert minutes_to_time(720) == "12:00"
+    assert minutes_to_time(1439) == "23:59"
+
+
+def test_minutes_to_time_overflow():
+    """Test minutes_to_time with values >= 24 hours (should wrap)."""
+    assert minutes_to_time(1440) == "00:00"  # 24:00 -> 00:00
+    assert minutes_to_time(1500) == "01:00"  # 25:00 -> 01:00
+    assert minutes_to_time(2880) == "00:00"  # 48:00 -> 00:00
+
+
+def test_minutes_to_time_edge_cases():
+    """Test minutes_to_time with edge cases."""
+    assert minutes_to_time(1) == "00:01"
+    assert minutes_to_time(59) == "00:59"
+    assert minutes_to_time(1380) == "23:00"
+
+
+# ==================== Update Travel Times Tests ====================
+
+
+def test_update_travel_times_from_routes_normal():
+    """Test update_travel_times_from_routes with normal routes_data."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place A",
+                        name_address="Place A Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:00",
+                        departure="10:00",
+                        travel_time=10  # Original value
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place B",
+                        name_address="Place B Address",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.5700,
+                        longitude=126.9800,
+                        arrival="10:10",
+                        departure="11:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=50000
+    )
+
+    routes_data = {(1, 1): 25}  # Update travel_time from 10 to 25
+
+    updated = update_travel_times_from_routes(itinerary, routes_data)
+
+    # Check travel_time was updated
+    assert updated.itinerary[0].visits[0].travel_time == 25
+    # Check other fields unchanged
+    assert updated.itinerary[0].visits[0].arrival == "09:00"
+    assert updated.itinerary[0].visits[0].departure == "10:00"
+    # Check original not modified
+    assert itinerary.itinerary[0].visits[0].travel_time == 10
+
+
+def test_update_travel_times_from_routes_partial():
+    """Test update_travel_times_from_routes with partial routes_data."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place A",
+                        name_address="Place A Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:00",
+                        departure="10:00",
+                        travel_time=10
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place B",
+                        name_address="Place B Address",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.5700,
+                        longitude=126.9800,
+                        arrival="10:10",
+                        departure="11:00",
+                        travel_time=15
+                    ),
+                    Visit2(
+                        order=3,
+                        display_name="Place C",
+                        name_address="Place C Address",
+                        place_tag=PlaceTag.CAFE,
+                        latitude=37.5720,
+                        longitude=126.9850,
+                        arrival="11:15",
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=50000
+    )
+
+    # Only update first visit's travel_time
+    routes_data = {(1, 1): 25}
+
+    updated = update_travel_times_from_routes(itinerary, routes_data)
+
+    # Check first was updated
+    assert updated.itinerary[0].visits[0].travel_time == 25
+    # Check second was NOT updated (kept original)
+    assert updated.itinerary[0].visits[1].travel_time == 15
+    # Check last is still 0
+    assert updated.itinerary[0].visits[2].travel_time == 0
+
+
+def test_update_travel_times_from_routes_empty():
+    """Test update_travel_times_from_routes with empty routes_data."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place A",
+                        name_address="Place A Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:00",
+                        departure="10:00",
+                        travel_time=10
+                    )
+                ]
+            )
+        ],
+        budget=50000
+    )
+
+    routes_data = {}  # Empty
+
+    updated = update_travel_times_from_routes(itinerary, routes_data)
+
+    # Check nothing changed
+    assert updated.itinerary[0].visits[0].travel_time == 10
+
+
+# ==================== Adjust Schedule Tests ====================
+
+
+def test_adjust_schedule_with_new_travel_times_normal():
+    """Test adjust_schedule with sufficient stay duration."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place A",
+                        name_address="Place A Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:00",
+                        departure="10:00",
+                        travel_time=25  # Updated from 10 to 25
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place B",
+                        name_address="Place B Address",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.5700,
+                        longitude=126.9800,
+                        arrival="10:10",
+                        departure="11:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=50000
+    )
+
+    adjusted = adjust_schedule_with_new_travel_times(itinerary, min_stay_minutes=30)
+
+    # First visit: arrival should stay the same
+    assert adjusted.itinerary[0].visits[0].arrival == "09:00"
+    # First visit: departure should be adjusted to match travel_time
+    # Expected arrival at next = 10:10
+    # Required departure = 10:10 - 25 = 09:45
+    # Stay duration = 09:45 - 09:00 = 45 minutes >= 30 ✓
+    assert adjusted.itinerary[0].visits[0].departure == "09:45"
+    # Second visit: arrival should stay the same
+    assert adjusted.itinerary[0].visits[1].arrival == "10:10"
+
+
+def test_adjust_schedule_with_new_travel_times_insufficient_stay():
+    """Test adjust_schedule when stay duration is too short (must push arrival forward)."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place A",
+                        name_address="Place A Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:00",
+                        departure="10:00",
+                        travel_time=50  # Very long travel time
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place B",
+                        name_address="Place B Address",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.5700,
+                        longitude=126.9800,
+                        arrival="10:10",  # Too soon!
+                        departure="11:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=50000
+    )
+
+    adjusted = adjust_schedule_with_new_travel_times(itinerary, min_stay_minutes=30)
+
+    # First visit: arrival unchanged
+    assert adjusted.itinerary[0].visits[0].arrival == "09:00"
+    # First visit: departure = arrival + min_stay = 09:00 + 30 = 09:30
+    assert adjusted.itinerary[0].visits[0].departure == "09:30"
+    # Second visit: arrival must be pushed forward
+    # New arrival = 09:30 + 50 = 10:20
+    assert adjusted.itinerary[0].visits[1].arrival == "10:20"
+
+
+def test_adjust_schedule_with_new_travel_times_cascade():
+    """Test adjust_schedule with cascading adjustments."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place A",
+                        name_address="Place A Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:00",
+                        departure="10:00",
+                        travel_time=60  # Long travel
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place B",
+                        name_address="Place B Address",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.5700,
+                        longitude=126.9800,
+                        arrival="10:10",  # Too soon
+                        departure="11:00",
+                        travel_time=20
+                    ),
+                    Visit2(
+                        order=3,
+                        display_name="Place C",
+                        name_address="Place C Address",
+                        place_tag=PlaceTag.CAFE,
+                        latitude=37.5720,
+                        longitude=126.9850,
+                        arrival="11:20",  # Will be cascaded
+                        departure="12:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=50000
+    )
+
+    adjusted = adjust_schedule_with_new_travel_times(itinerary, min_stay_minutes=30)
+
+    # First visit: departure = 09:00 + 30 = 09:30
+    assert adjusted.itinerary[0].visits[0].arrival == "09:00"
+    assert adjusted.itinerary[0].visits[0].departure == "09:30"
+
+    # Second visit: arrival = 09:30 + 60 = 10:30
+    assert adjusted.itinerary[0].visits[1].arrival == "10:30"
+    # Second visit: departure = 10:30 + 30 = 11:00
+    assert adjusted.itinerary[0].visits[1].departure == "11:00"
+
+    # Third visit: arrival = 11:00 + 20 = 11:20 (cascaded)
+    assert adjusted.itinerary[0].visits[2].arrival == "11:20"
+
+
+def test_adjust_schedule_with_new_travel_times_multiple_days():
+    """Test adjust_schedule with multiple days."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place A",
+                        name_address="Place A Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:00",
+                        departure="10:00",
+                        travel_time=25
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place B",
+                        name_address="Place B Address",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=37.5700,
+                        longitude=126.9800,
+                        arrival="10:10",
+                        departure="11:00",
+                        travel_time=0
+                    )
+                ]
+            ),
+            DayItinerary2(
+                day=2,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place C",
+                        name_address="Place C Address",
+                        place_tag=PlaceTag.CAFE,
+                        latitude=37.5720,
+                        longitude=126.9850,
+                        arrival="09:00",
+                        departure="10:00",
+                        travel_time=15
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Place D",
+                        name_address="Place D Address",
+                        place_tag=PlaceTag.OTHER,
+                        latitude=37.5740,
+                        longitude=126.9900,
+                        arrival="10:10",
+                        departure="11:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    adjusted = adjust_schedule_with_new_travel_times(itinerary, min_stay_minutes=30)
+
+    # Day 1: first visit departure adjusted
+    assert adjusted.itinerary[0].visits[0].arrival == "09:00"
+    assert adjusted.itinerary[0].visits[0].departure == "09:45"  # 10:10 - 25
+
+    # Day 2: first visit departure adjusted
+    assert adjusted.itinerary[1].visits[0].arrival == "09:00"
+    assert adjusted.itinerary[1].visits[0].departure == "09:55"  # 10:10 - 15
