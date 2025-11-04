@@ -8,6 +8,12 @@ from google.genai import types
 from config import settings
 from models.schemas2 import ItineraryRequest2, ItineraryResponse2, PlaceWithTag, PlaceTag
 # PR#9: adjust_itinerary_with_actual_travel_times import 제거됨
+# PR#10: Routes API 및 시간 조정 함수 import 추가
+from services.validators import (
+    fetch_actual_travel_times,
+    update_travel_times_from_routes,
+    adjust_schedule_with_new_travel_times
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1317,6 +1323,30 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                     logger.error(f"Data: {json.dumps(itinerary_data, indent=2, ensure_ascii=False)}")
                     raise Exception(f"Invalid itinerary format: {str(e)}")
 
+                # PR#10: Routes API로 실제 이동시간 수집 및 일정 조정
+                logger.info("🚗 Fetching actual travel times from Routes API...")
+                try:
+                    actual_travel_times = fetch_actual_travel_times(itinerary_response)
+
+                    if actual_travel_times:
+                        logger.info(f"✅ Fetched {len(actual_travel_times)} travel times from Routes API")
+
+                        # travel_time 필드 업데이트
+                        itinerary_response = update_travel_times_from_routes(
+                            itinerary_response,
+                            actual_travel_times
+                        )
+                        logger.info("✅ Updated travel_time fields with actual Routes API data")
+
+                        # arrival/departure 시간 재조정 (arrival 우선 유지)
+                        itinerary_response = adjust_schedule_with_new_travel_times(itinerary_response)
+                        logger.info("✅ Adjusted schedule based on new travel times (keeping arrival times fixed)")
+                    else:
+                        logger.warning("⚠️ No travel times returned from Routes API - proceeding with original schedule")
+
+                except Exception as e:
+                    logger.warning(f"⚠️ Routes API call failed: {str(e)} - proceeding with original schedule")
+
                 # 사후 검증 (must_visit, days, operating_hours)
                 validation_results = self._validate_response(itinerary_response, request)
 
@@ -1343,9 +1373,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 
                     # 재시도 가능 여부 확인
                     if attempt == max_retries:
-                        # 3번째 시도 실패 → Routes API actual_time으로 조정하여 반환
+                        # PR#10: 매번 Routes API로 자동 조정하므로 추가 조정 없이 반환
                         logger.warning(
-                            f"⚠️ 일정 생성 검증 실패 (최대 재시도 {max_retries}회 초과) - Routes API actual_time으로 조정합니다"
+                            f"⚠️ 일정 생성 검증 실패 (최대 재시도 {max_retries}회 초과)"
                         )
                         logger.warning(
                             f"검증 결과: {json.dumps(validation_results, ensure_ascii=False, indent=2)}"
@@ -1356,8 +1386,6 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                             missing = validation_results["must_visit"].get("missing", [])
                             logger.warning(f"❌ must_visit 미충족: 누락된 장소 {len(missing)}개 - {missing}")
 
-                        # travel_time 로그 제거됨 - 이제 검증하지 않음
-
                         if not validation_results.get("operating_hours", {}).get("is_valid", True):
                             violations = validation_results["operating_hours"].get("violations", [])
                             logger.warning(f"❌ operating_hours 위반: {len(violations)}건")
@@ -1366,8 +1394,8 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                             violations = validation_results["rules"].get("violations", [])
                             logger.warning(f"❌ rules 위반: {len(violations)}건")
 
-                        # PR#9: 조정 로직 제거 - 검증 실패 시 원본 일정 반환
-                        logger.warning("⚠️ 최대 재시도 초과 - 검증 실패한 일정을 반환합니다")
+                        # 매번 Routes API로 조정하므로 추가 조정 불필요
+                        logger.warning("⚠️ 매번 Routes API로 자동 조정하므로 추가 조정 없이 검증 실패한 일정을 반환합니다")
                         return itinerary_response
 
                     elif attempt < max_retries:

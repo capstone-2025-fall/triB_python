@@ -7,7 +7,7 @@ V2 시스템의 종단간 테스트:
 3. must_visit 장소가 일정에 포함되었는지
 4. travel_time 규칙이 지켜지는지 (마지막 visit = 0)
 5. 생성된 일정이 요청된 rule을 모두 지키는지 (Gemini로 검증)
-6. 각 일정 사이의 travel_time이 실제 경로와 일치하는지 (Google Routes API로 검증)
+6. PR#10: Routes API로 자동 조정된 일정의 시간 연속성 검증 (체류시간, 시간 전환)
 """
 
 import pytest
@@ -775,31 +775,72 @@ async def test_itinerary_generation_v2_e2e():
         # Note: We're not failing the test here because this is testing the validation logic,
         # not the itinerary generation logic. The validation successfully identified non-compliance.
 
-    # 11. 이동시간 정확도 검증 (Google Routes API 사용)
+    # 11. PR#10: 시간 조정 결과 검증 (Routes API로 자동 조정된 일정)
     print(f"\n" + "=" * 60)
-    print(f"Travel Time Accuracy Verification (Google Routes API)")
+    print(f"Schedule Adjustment Verification (Routes API Auto-Adjusted)")
     print(f"=" * 60)
 
-    travel_time_validation = validate_travel_times_with_grounding(data, tolerance_minutes=10)
+    adjustment_issues = []
+    total_checks = 0
 
-    print(f"\nValidating travel times between consecutive visits:")
-    for result in travel_time_validation["validation_results"]:
-        if result["actual"] is not None:
-            status = "✓" if result["valid"] else "✗"
-            print(f"{status} Day {result['day']}: {result['from']} → {result['to']}")
-            print(f"  Expected: {result['expected']}min, Actual: {result['actual']}min, Deviation: {result['deviation']}min")
-        else:
-            print(f"✗ Day {result['day']}: {result['from']} → {result['to']}")
-            print(f"  Error: {result.get('error', 'Unknown error')}")
+    print(f"\nValidating schedule continuity and stay times:")
+    for day_data in data["itinerary"]:
+        day_num = day_data["day"]
+        visits = day_data["visits"]
 
-    stats = travel_time_validation["statistics"]
-    print(f"\n✓ Travel Time Statistics:")
-    print(f"  - Total validated: {stats['total_validated']}")
-    print(f"  - Average deviation: {stats['avg_deviation']:.1f} minutes")
-    print(f"  - Maximum deviation: {stats['max_deviation']} minutes")
+        for i, visit in enumerate(visits):
+            # 체류시간 검증 (departure >= arrival)
+            arrival_time = visit["arrival"]
+            departure_time = visit["departure"]
 
-    # Check if we have any successful validations (API might not be authorized)
-    successful_validations = [r for r in travel_time_validation["validation_results"] if r["actual"] is not None]
+            arrival_minutes = int(arrival_time.split(":")[0]) * 60 + int(arrival_time.split(":")[1])
+            departure_minutes = int(departure_time.split(":")[0]) * 60 + int(departure_time.split(":")[1])
+
+            stay_time = departure_minutes - arrival_minutes
+            if stay_time < 0:
+                adjustment_issues.append({
+                    "type": "negative_stay_time",
+                    "day": day_num,
+                    "place": visit["display_name"],
+                    "arrival": arrival_time,
+                    "departure": departure_time,
+                    "stay_time": stay_time
+                })
+                print(f"✗ Day {day_num}: {visit['display_name']} - Negative stay time ({stay_time}min)")
+
+            total_checks += 1
+
+            # 시간 연속성 검증 (다음 arrival ≈ 이전 departure + travel_time)
+            if i < len(visits) - 1:
+                next_visit = visits[i + 1]
+                expected_next_arrival_minutes = departure_minutes + visit["travel_time"]
+
+                # 24시간 넘어갈 경우 처리
+                if expected_next_arrival_minutes >= 24 * 60:
+                    expected_next_arrival_minutes %= (24 * 60)
+
+                next_arrival_time = next_visit["arrival"]
+                next_arrival_minutes = int(next_arrival_time.split(":")[0]) * 60 + int(next_arrival_time.split(":")[1])
+
+                # ±2분 허용
+                deviation = abs(next_arrival_minutes - expected_next_arrival_minutes)
+                if deviation > 2:
+                    adjustment_issues.append({
+                        "type": "time_continuity",
+                        "day": day_num,
+                        "from": visit["display_name"],
+                        "to": next_visit["display_name"],
+                        "departure": departure_time,
+                        "travel_time": visit["travel_time"],
+                        "expected_arrival": f"{expected_next_arrival_minutes // 60:02d}:{expected_next_arrival_minutes % 60:02d}",
+                        "actual_arrival": next_arrival_time,
+                        "deviation": deviation
+                    })
+                    print(f"✗ Day {day_num}: {visit['display_name']} → {next_visit['display_name']}")
+                    print(f"  Expected arrival: {expected_next_arrival_minutes // 60:02d}:{expected_next_arrival_minutes % 60:02d}, "
+                          f"Actual: {next_arrival_time}, Deviation: {deviation}min")
+
+                total_checks += 1
 
     # 테스트 종료 시간 및 상태 결정
     end_time = time.time()
@@ -808,23 +849,38 @@ async def test_itinerary_generation_v2_e2e():
     test_passed = True
     test_status = "PASSED"
 
-    if successful_validations:
-        try:
-            assert travel_time_validation["all_valid"], \
-                f"Some travel times deviate too much from actual routes (tolerance: 10 minutes)"
-            print(f"\n✓ All travel times are within acceptable range!")
-        except AssertionError as e:
-            test_passed = False
-            test_status = "FAILED"
-            print(f"\n⚠ Travel time validation failed: {e}")
+    if adjustment_issues:
+        test_passed = False
+        test_status = "FAILED"
+        print(f"\n⚠ Schedule adjustment validation failed: {len(adjustment_issues)} issue(s) found")
+        for issue in adjustment_issues:
+            if issue["type"] == "negative_stay_time":
+                print(f"  - Day {issue['day']}: {issue['place']} has negative stay time ({issue['stay_time']}min)")
+            elif issue["type"] == "time_continuity":
+                print(f"  - Day {issue['day']}: {issue['from']} → {issue['to']} time gap ({issue['deviation']}min)")
     else:
-        print(f"\n⚠ Travel time validation skipped: Google Routes API not authorized")
-        print(f"  Note: Enable Routes API in Google Cloud Console to run this validation")
+        print(f"\n✓ All {total_checks} schedule checks passed!")
+        print(f"  - All stay times are non-negative")
+        print(f"  - All time transitions are continuous (within ±2min tolerance)")
 
     # 보고서 생성
     print(f"\n" + "=" * 60)
     print(f"Generating Test Report...")
     print(f"=" * 60)
+
+    # PR#10: travel_time_validation 대신 adjustment_issues 사용
+    # 기존 보고서 함수와의 호환성을 위해 호환 딕셔너리 생성
+    travel_time_validation_compat = {
+        "all_valid": len(adjustment_issues) == 0,
+        "validation_results": [],
+        "statistics": {
+            "total_validated": total_checks,
+            "total_checks": total_checks,
+            "failed_checks": len(adjustment_issues),
+            "avg_deviation": 0.0,
+            "max_deviation": 0
+        }
+    }
 
     report = generate_test_report(
         test_status=test_status,
@@ -832,7 +888,7 @@ async def test_itinerary_generation_v2_e2e():
         itinerary_data=data,
         request_data=request_data,
         rule_validation=rule_validation,
-        travel_time_validation=travel_time_validation,
+        travel_time_validation=travel_time_validation_compat,
         validation_results=None  # 구버전 검증 함수 제거로 인해 None 설정
     )
 
