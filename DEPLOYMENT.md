@@ -131,17 +131,17 @@ cp .env.example .env
 
 ### 2. Docker 이미지 빌드
 ```bash
-docker-compose build
+docker compose build
 ```
 
 ### 3. 컨테이너 실행
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### 4. 로그 확인
 ```bash
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ### 5. Health Check
@@ -173,7 +173,7 @@ curl -X POST http://localhost:8000/api/v2/itinerary/generate \
 
 ### 7. 컨테이너 중지
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ---
@@ -234,8 +234,8 @@ bash scripts/deploy.sh
 
 ### 5. 상태 확인
 ```bash
-docker-compose ps
-docker-compose logs --tail=50
+docker compose ps
+docker compose logs --tail=50
 curl http://localhost:8000/
 ```
 
@@ -293,7 +293,7 @@ FastAPI는 다음 Origin을 허용합니다:
 docker ps
 
 # 컨테이너 중지
-docker-compose down
+docker compose down
 
 # 포트를 사용하는 프로세스 확인
 sudo lsof -i :8000
@@ -327,11 +327,11 @@ nano .env
 ### 5. 컨테이너가 시작되지 않음
 ```bash
 # 로그 확인
-docker-compose logs --tail=100
+docker compose logs --tail=100
 
 # 이미지 재빌드
-docker-compose build --no-cache
-docker-compose up -d
+docker compose build --no-cache
+docker compose up -d
 ```
 
 ### 6. Health Check 실패
@@ -362,19 +362,19 @@ allow_origins=[
 ### Docker 관련
 ```bash
 # 컨테이너 상태 확인
-docker-compose ps
+docker compose ps
 
 # 로그 실시간 확인
-docker-compose logs -f
+docker compose logs -f
 
 # 컨테이너 재시작
-docker-compose restart
+docker compose restart
 
 # 컨테이너 중지 및 삭제
-docker-compose down
+docker compose down
 
 # 이미지 재빌드
-docker-compose build --no-cache
+docker compose build --no-cache
 
 # 디스크 공간 확보 (사용하지 않는 이미지 삭제)
 docker system prune -a
