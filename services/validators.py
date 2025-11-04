@@ -680,6 +680,29 @@ def update_travel_times_from_routes(
     return updated
 
 
+def is_first_or_last_visit(visit_index: int, total_visits: int) -> tuple[bool, bool]:
+    """
+    Check if a visit is the first or last visit of the day.
+
+    Args:
+        visit_index: Index of the visit (0-based)
+        total_visits: Total number of visits in the day
+
+    Returns:
+        Tuple of (is_first, is_last)
+        - is_first: True if this is the first visit of the day
+        - is_last: True if this is the last visit of the day
+
+    Note:
+        - First visit is at index 0
+        - Last visit is at index (total_visits - 1)
+        - A single visit is both first and last
+    """
+    is_first = (visit_index == 0)
+    is_last = (visit_index == total_visits - 1)
+    return is_first, is_last
+
+
 def adjust_schedule_with_new_travel_times(
     itinerary: ItineraryResponse2,
     min_stay_minutes: int = 30
