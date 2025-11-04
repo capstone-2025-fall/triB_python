@@ -717,13 +717,17 @@ def adjust_schedule_with_new_travel_times(
     Strategy:
     1. Keep arrival times fixed when possible (Priority #1)
     2. Adjust only departure times to match travel_time
-    3. If stay duration becomes too short (< min_stay_minutes):
+    3. Special handling for first/last visits:
+       - First visit: departure = arrival (no stay, just departure time)
+       - Last visit: departure = arrival (just arrival time, no stay)
+    4. For middle visits, if stay duration becomes too short (< min_stay_minutes):
        - Push forward the next visit's arrival time
        - Propagate changes to all subsequent visits (cascade adjustment)
 
     Args:
         itinerary: The itinerary with updated travel_time values
         min_stay_minutes: Minimum stay duration at each place (default: 30)
+                         Only applied to middle visits, not first/last
 
     Returns:
         Adjusted itinerary with recalculated arrival/departure times (deep copy)
@@ -731,7 +735,8 @@ def adjust_schedule_with_new_travel_times(
     Note:
         - Creates a deep copy to avoid modifying the original itinerary
         - Processes each day independently
-        - Ensures stay_duration = departure - arrival >= min_stay_minutes
+        - First/last visits have stay_duration = 0 (departure = arrival)
+        - Middle visits: stay_duration = departure - arrival >= min_stay_minutes
         - Cascades adjustments forward when arrival times must be changed
     """
     import copy
@@ -750,17 +755,26 @@ def adjust_schedule_with_new_travel_times(
         # Process visits in forward order
         for i in range(len(visits)):
             current_visit = visits[i]
+            is_first, is_last = is_first_or_last_visit(i, len(visits))
 
-            # Calculate stay duration
+            # Get arrival time in minutes
             arrival_min = time_to_minutes(current_visit.arrival)
-            departure_min = time_to_minutes(current_visit.departure)
-            stay_duration = departure_min - arrival_min
 
-            # Ensure minimum stay duration
-            if stay_duration < min_stay_minutes:
-                # Adjust departure to meet minimum stay
-                departure_min = arrival_min + min_stay_minutes
-                current_visit.departure = minutes_to_time(departure_min)
+            # Special handling for first/last visits: zero stay duration
+            if is_first or is_last:
+                # First/last visits: departure = arrival (no stay time)
+                current_visit.departure = current_visit.arrival
+                departure_min = arrival_min
+            else:
+                # Middle visits: ensure minimum stay duration
+                departure_min = time_to_minutes(current_visit.departure)
+                stay_duration = departure_min - arrival_min
+
+                # Ensure minimum stay duration
+                if stay_duration < min_stay_minutes:
+                    # Adjust departure to meet minimum stay
+                    departure_min = arrival_min + min_stay_minutes
+                    current_visit.departure = minutes_to_time(departure_min)
 
             # If this is not the last visit, adjust next visit's arrival
             if i < len(visits) - 1:
@@ -777,27 +791,35 @@ def adjust_schedule_with_new_travel_times(
                     # Calculate required departure to arrive on time
                     required_departure_min = next_arrival_min - current_visit.travel_time
 
+                    # For first/last visits, don't enforce minimum stay
+                    min_stay_for_current = 0 if (is_first or is_last) else min_stay_minutes
+
                     # Check if we can maintain minimum stay
-                    if required_departure_min >= arrival_min + min_stay_minutes:
+                    if required_departure_min >= arrival_min + min_stay_for_current:
                         # Can maintain arrival - just adjust departure
                         current_visit.departure = minutes_to_time(required_departure_min)
                     else:
                         # Cannot maintain minimum stay - must push forward next arrival
-                        # Set departure to minimum stay
-                        current_visit.departure = minutes_to_time(arrival_min + min_stay_minutes)
+                        # Set departure to minimum stay (0 for first/last, min_stay_minutes for middle)
+                        current_visit.departure = minutes_to_time(arrival_min + min_stay_for_current)
 
                         # Push forward next visit and cascade
-                        new_next_arrival_min = arrival_min + min_stay_minutes + current_visit.travel_time
+                        new_next_arrival_min = arrival_min + min_stay_for_current + current_visit.travel_time
                         next_visit.arrival = minutes_to_time(new_next_arrival_min)
 
                         # Cascade adjustment to all subsequent visits
                         for j in range(i + 1, len(visits)):
                             cascade_visit = visits[j]
+                            cascade_is_first, cascade_is_last = is_first_or_last_visit(j, len(visits))
                             cascade_arrival_min = time_to_minutes(cascade_visit.arrival)
 
-                            # Ensure minimum stay at this visit
-                            cascade_departure_min = cascade_arrival_min + min_stay_minutes
-                            cascade_visit.departure = minutes_to_time(cascade_departure_min)
+                            # Ensure minimum stay at this visit (0 for first/last, min_stay_minutes for middle)
+                            if cascade_is_first or cascade_is_last:
+                                cascade_visit.departure = cascade_visit.arrival
+                                cascade_departure_min = cascade_arrival_min
+                            else:
+                                cascade_departure_min = cascade_arrival_min + min_stay_minutes
+                                cascade_visit.departure = minutes_to_time(cascade_departure_min)
 
                             # Update next visit's arrival if not the last
                             if j < len(visits) - 1:
