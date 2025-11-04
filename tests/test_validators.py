@@ -12,6 +12,7 @@ from services.validators import (
     validate_days_count,
     time_to_minutes,
     minutes_to_time,
+    infer_travel_mode,
     is_first_or_last_visit,
     update_travel_times_from_routes,
     adjust_schedule_with_new_travel_times
@@ -1430,3 +1431,71 @@ def test_adjust_schedule_middle_visits_min_stay():
     # Last visit: zero stay
     last_visit = adjusted.itinerary[0].visits[3]
     assert last_visit.departure == last_visit.arrival
+
+
+# ============================================================================
+# PR#13: Tests for infer_travel_mode
+# ============================================================================
+
+def test_infer_travel_mode_drive():
+    """Test that DRIVE keywords are correctly identified."""
+    # Test various DRIVE keywords
+    assert infer_travel_mode(["오사카 여행", "렌터카 빌려서"]) == "DRIVE"
+    assert infer_travel_mode(["차 빌려서 갈 계획"]) == "DRIVE"
+    assert infer_travel_mode(["자동차로 이동"]) == "DRIVE"
+    assert infer_travel_mode(["렌트해서 갈게요"]) == "DRIVE"
+    assert infer_travel_mode(["드라이브 코스"]) == "DRIVE"
+
+
+def test_infer_travel_mode_transit():
+    """Test that TRANSIT keywords are correctly identified."""
+    # Test various TRANSIT keywords
+    assert infer_travel_mode(["지하철로 이동"]) == "TRANSIT"
+    assert infer_travel_mode(["버스 타고 갈게요"]) == "TRANSIT"
+    assert infer_travel_mode(["대중교통 이용"]) == "TRANSIT"
+    assert infer_travel_mode(["전철로 다닐 계획"]) == "TRANSIT"
+    assert infer_travel_mode(["트램 타고"]) == "TRANSIT"
+
+
+def test_infer_travel_mode_walk():
+    """Test that WALK keywords are correctly identified."""
+    # Test various WALK keywords
+    assert infer_travel_mode(["걸어서 다닐 거예요"]) == "WALK"
+    assert infer_travel_mode(["도보로 이동"]) == "WALK"
+    assert infer_travel_mode(["산책하면서"]) == "WALK"
+    assert infer_travel_mode(["걷기 좋은 코스"]) == "WALK"
+
+
+def test_infer_travel_mode_bicycle():
+    """Test that BICYCLE keywords are correctly identified."""
+    # Test various BICYCLE keywords
+    assert infer_travel_mode(["자전거 타고"]) == "BICYCLE"
+    assert infer_travel_mode(["바이크로 이동"]) == "BICYCLE"
+    assert infer_travel_mode(["사이클 투어"]) == "BICYCLE"
+
+
+def test_infer_travel_mode_default():
+    """Test that default mode is TRANSIT when no keywords are found."""
+    # Test default (no keywords)
+    assert infer_travel_mode(["오사카 3일 여행"]) == "TRANSIT"
+    assert infer_travel_mode(["맛집 추천해주세요"]) == "TRANSIT"
+    assert infer_travel_mode([]) == "TRANSIT"
+
+
+def test_infer_travel_mode_priority():
+    """Test that priority order is respected: DRIVE > TRANSIT > WALK > BICYCLE."""
+    # DRIVE has priority over TRANSIT
+    assert infer_travel_mode(["렌터카 빌려서 지하철도 탈 계획"]) == "DRIVE"
+
+    # TRANSIT has priority over WALK
+    assert infer_travel_mode(["버스 타고 걸어서도 다닐게요"]) == "TRANSIT"
+
+    # WALK has priority over BICYCLE
+    assert infer_travel_mode(["걸어서 자전거도 탈 예정"]) == "WALK"
+
+
+def test_infer_travel_mode_case_insensitive():
+    """Test that matching is case-insensitive."""
+    # Mixed case should work
+    assert infer_travel_mode(["렌터카"]) == "DRIVE"
+    assert infer_travel_mode(["RENTAL CAR", "렌터카"]) == "DRIVE"
