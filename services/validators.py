@@ -15,6 +15,76 @@ from google import genai
 from google.genai import types
 
 
+def infer_travel_mode(chat: List[str]) -> str:
+    """
+    Infer travel mode from chat messages by keyword matching.
+
+    This function analyzes chat messages to determine the user's preferred
+    mode of transportation. It matches keywords in Korean to standard
+    Google Routes API travel modes.
+
+    Args:
+        chat: List of chat messages from the user
+
+    Returns:
+        Travel mode string: "DRIVE", "TRANSIT", "WALK", or "BICYCLE"
+        Defaults to "TRANSIT" if no keywords are found
+
+    Keyword Matching:
+        - DRIVE: "렌터카", "차", "자동차", "차 빌려서", "렌트"
+        - TRANSIT: "지하철", "버스", "대중교통", "전철"
+        - WALK: "걸어서", "도보", "산책", "걷기"
+        - BICYCLE: "자전거", "바이크"
+
+    Note:
+        - Case-insensitive matching
+        - First match wins (priority: DRIVE > TRANSIT > WALK > BICYCLE)
+        - If multiple keywords exist, earlier keywords take precedence
+        - Default is TRANSIT for typical city travel
+
+    Example:
+        >>> infer_travel_mode(["오사카 여행", "렌터카 빌려서 가고 싶어요"])
+        "DRIVE"
+        >>> infer_travel_mode(["도쿄 3일", "대중교통으로 이동"])
+        "TRANSIT"
+        >>> infer_travel_mode(["파리 여행"])
+        "TRANSIT"  # default
+    """
+    # Join all chat messages for keyword search
+    chat_text = " ".join(chat).lower()
+
+    # Priority order: DRIVE > TRANSIT > WALK > BICYCLE
+    # (DRIVE has highest priority as it's most specific)
+
+    drive_keywords = ["렌터카", "차", "자동차", "차 빌려서", "렌트", "드라이브", "운전"]
+    transit_keywords = ["지하철", "버스", "대중교통", "전철", "트램"]
+    walk_keywords = ["걸어서", "도보", "산책", "걷기"]
+    bicycle_keywords = ["자전거", "바이크", "사이클"]
+
+    # Check for DRIVE keywords
+    for keyword in drive_keywords:
+        if keyword in chat_text:
+            return "DRIVE"
+
+    # Check for TRANSIT keywords
+    for keyword in transit_keywords:
+        if keyword in chat_text:
+            return "TRANSIT"
+
+    # Check for WALK keywords
+    for keyword in walk_keywords:
+        if keyword in chat_text:
+            return "WALK"
+
+    # Check for BICYCLE keywords
+    for keyword in bicycle_keywords:
+        if keyword in chat_text:
+            return "BICYCLE"
+
+    # Default: TRANSIT (most common for city travel)
+    return "TRANSIT"
+
+
 def extract_all_place_names(itinerary: ItineraryResponse2) -> List[str]:
     """
     Extract all place display names from the itinerary.
