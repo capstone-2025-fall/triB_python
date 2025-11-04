@@ -656,3 +656,162 @@ travel_time 검증 로직 추가 완료!
 - Commit 3.3: 검증 실패 시 프롬프트 강화 로직
 - Commit 3.4: E2E 테스트 추가
 - Commit 3.5: 검증 보고서 생성 개선
+
+---
+
+## PR #12: 첫/마지막 일정 체류시간 0으로 설정 ✅
+
+**목표**: 첫 번째와 마지막 일정의 체류시간을 0으로 설정 (arrival == departure)
+
+**배경**:
+- 첫 방문: 숙소에서 출발 시간만 필요, 체류시간 불필요
+- 마지막 방문: 숙소 도착 시간만 필요, 체류시간 불필요
+- 기존: 모든 visit에 대해 `min_stay_minutes = 30` 강제 적용
+
+**변경사항**:
+1. 첫/마지막 visit 식별 헬퍼 함수 추가
+2. `adjust_schedule_with_new_travel_times` 함수 수정
+3. 단위 테스트 및 E2E 테스트 업데이트
+
+### Commit 12.1: 첫/마지막 방문 식별 헬퍼 함수 추가 ✅
+- **커밋**: 4d6ceee
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - `is_first_or_last_visit(visit_index, total_visits)` 함수 추가
+  - 각 day의 첫 번째/마지막 visit 식별 로직
+  - 반환값: `(is_first, is_last)` tuple
+- **상태**: 완료 ✅
+
+### Commit 12.2: adjust_schedule_with_new_travel_times 수정 ✅
+- **커밋**: efbc905, 3ca6261 (로직 수정 포함)
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - 첫 번째 visit: `departure = arrival` (체류시간 0)
+  - 마지막 visit: `departure = arrival` (체류시간 0)
+  - 중간 visit들: 기존 로직 유지 (min_stay >= 30분)
+  - Cascade 조정 로직에도 first/last 처리 추가
+  - 첫/마지막 visit의 departure가 덮어씌워지지 않도록 로직 수정
+- **상태**: 완료 ✅
+
+### Commit 12.3: 단위 테스트 추가 ✅
+- **커밋**: 3ca6261
+- **파일**: `tests/test_validators.py`
+- **변경사항**:
+  - `test_is_first_or_last_visit_single_visit`: 단일 visit 테스트
+  - `test_is_first_or_last_visit_multiple_visits`: 여러 visit 테스트
+  - `test_adjust_schedule_first_last_zero_stay`: 첫/마지막 체류시간 0 검증
+  - `test_adjust_schedule_middle_visits_min_stay`: 중간 visit 최소 체류시간 검증
+  - 모든 테스트 통과 (4/4)
+- **상태**: 완료 ✅
+
+### Commit 12.4: E2E 테스트 업데이트 ✅
+- **커밋**: c48f109
+- **파일**: `tests/test_e2e_itinerary2.py`
+- **변경사항**:
+  - 첫/마지막 방문 체류시간 0 검증 추가
+  - `first_last_nonzero_stay` 에러 타입 추가
+  - 중간 방문은 음수 체류시간만 체크
+  - 성공 메시지에 PR#12 변경사항 명시
+- **상태**: 완료 ✅
+
+---
+
+## PR #13: travel_mode 추론 및 Routes API 적용 ✅
+
+**목표**: validators.py의 hardcoded "DRIVE"를 일정 생성에서 사용한 travel_mode로 대체
+
+**배경**:
+- `validators.py` line 189: `"travelMode": "DRIVE"` 하드코딩
+- Gemini는 chat에서 travel_mode 추론하지만 Routes API는 항상 DRIVE 사용
+- 불일치 발생 (Gemini는 TRANSIT, Routes API는 DRIVE)
+
+**변경사항**:
+1. travel_mode 추론 유틸리티 함수 추가
+2. `fetch_actual_travel_times` 시그니처에 `travel_mode` 파라미터 추가
+3. `generate_itinerary`에서 travel_mode 추론 및 전달
+4. 단위 테스트 및 E2E 테스트 업데이트
+
+### Commit 13.1: travel_mode 추론 유틸리티 함수 추가 ✅
+- **커밋**: 231fa4b
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - `infer_travel_mode(chat: List[str])` 함수 추가
+  - 키워드 매칭:
+    - 렌터카/차/자동차 → DRIVE
+    - 지하철/버스/대중교통 → TRANSIT
+    - 걸어서/도보 → WALK
+    - 자전거 → BICYCLE
+  - 기본값: TRANSIT (도시 여행 일반적)
+  - 우선순위: DRIVE > TRANSIT > WALK > BICYCLE
+- **상태**: 완료 ✅
+
+### Commit 13.2: fetch_actual_travel_times 시그니처 수정 ✅
+- **커밋**: f3f5e8a
+- **파일**: `services/validators.py`
+- **변경사항**:
+  - `travel_mode: str = "TRANSIT"` 파라미터 추가
+  - Line 259의 하드코딩된 "DRIVE"를 `travel_mode` 변수로 변경
+  - DRIVE 모드일 때만 TRAFFIC_AWARE 사용
+  - 다른 모드는 TRAFFIC_UNAWARE 사용
+  - Docstring 업데이트 (PR#13 변경사항 명시)
+- **상태**: 완료 ✅
+
+### Commit 13.3: generate_itinerary에서 travel_mode 추론 및 전달 ✅
+- **커밋**: c15e1fe
+- **파일**: `services/itinerary_generator2.py`
+- **변경사항**:
+  - `infer_travel_mode` import 추가
+  - `generate_itinerary`에서 `request.chat`으로 travel_mode 추론
+  - `fetch_actual_travel_times` 호출 시 `travel_mode` 전달
+  - 추론된 travel_mode 로그 출력
+  - Routes API 호출 로그에 mode 정보 추가
+- **상태**: 완료 ✅
+
+### Commit 13.4: 단위 테스트 추가 ✅
+- **커밋**: 375c5cd
+- **파일**: `tests/test_validators.py`
+- **변경사항**:
+  - `test_infer_travel_mode_drive`: DRIVE 키워드 테스트 (5개)
+  - `test_infer_travel_mode_transit`: TRANSIT 키워드 테스트 (5개)
+  - `test_infer_travel_mode_walk`: WALK 키워드 테스트 (4개)
+  - `test_infer_travel_mode_bicycle`: BICYCLE 키워드 테스트 (3개)
+  - `test_infer_travel_mode_default`: 기본값 (TRANSIT) 테스트
+  - `test_infer_travel_mode_priority`: 우선순위 테스트
+  - `test_infer_travel_mode_case_insensitive`: 대소문자 무시 테스트
+  - 모든 테스트 통과 (7/7)
+- **상태**: 완료 ✅
+
+### Commit 13.5: E2E 테스트 업데이트 및 검증 ✅
+- **커밋**: 08d14a8
+- **파일**: `tests/test_e2e_itinerary2.py`
+- **변경사항**:
+  - Docstring에 PR#13 테스트 항목 추가
+  - E2E 테스트는 `generate_itinerary` 호출 시 자동으로 PR#13 로직 실행
+  - 로그에서 "Inferred travel mode: {mode}" 확인 가능
+- **상태**: 완료 ✅
+
+---
+
+## 구현 완료 요약
+
+### PR #1-11: 완료 ✅
+- 5단계 우선순위 프롬프트 재작성
+- 숙소 추천 기능 강화
+- travel_time 검증 및 재시도 로직
+- Routes API 기반 시간 조정
+
+### PR #12: 첫/마지막 일정 체류시간 0으로 설정 ✅
+- 4개 커밋 완료
+- 첫/마지막 visit: departure = arrival (체류시간 0)
+- 중간 visit: min_stay >= 30분 유지
+- 단위 테스트 4개, E2E 테스트 업데이트
+
+### PR #13: travel_mode 추론 및 Routes API 적용 ✅
+- 5개 커밋 완료
+- chat에서 travel_mode 자동 추론
+- Routes API에 추론된 mode 전달
+- 단위 테스트 7개, E2E 테스트 업데이트
+
+**총 커밋 수**: 9개 (PR#12: 4개, PR#13: 5개)
+**총 테스트 수**: 11개 (PR#12: 4개, PR#13: 7개)
+**상태**: 모든 작업 완료 ✅
