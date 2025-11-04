@@ -9,7 +9,9 @@ from config import settings
 from models.schemas2 import ItineraryRequest2, ItineraryResponse2, PlaceWithTag, PlaceTag
 # PR#9: adjust_itinerary_with_actual_travel_times import 제거됨
 # PR#10: Routes API 및 시간 조정 함수 import 추가
+# PR#13: infer_travel_mode import 추가
 from services.validators import (
+    infer_travel_mode,
     fetch_actual_travel_times,
     update_travel_times_from_routes,
     adjust_schedule_with_new_travel_times
@@ -1323,9 +1325,12 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                     raise Exception(f"Invalid itinerary format: {str(e)}")
 
                 # PR#10: Routes API로 실제 이동시간 수집 및 일정 조정
-                logger.info("🚗 Fetching actual travel times from Routes API...")
+                # PR#13: chat에서 travel_mode 추론
+                travel_mode = infer_travel_mode(request.chat)
+                logger.info(f"🚗 Inferred travel mode: {travel_mode}")
+                logger.info(f"🚗 Fetching actual travel times from Routes API (mode: {travel_mode})...")
                 try:
-                    actual_travel_times = fetch_actual_travel_times(itinerary_response)
+                    actual_travel_times = fetch_actual_travel_times(itinerary_response, travel_mode=travel_mode)
 
                     if actual_travel_times:
                         logger.info(f"✅ Fetched {len(actual_travel_times)} travel times from Routes API")
