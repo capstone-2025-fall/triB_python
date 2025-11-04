@@ -8,6 +8,8 @@ V2 시스템의 종단간 테스트:
 4. travel_time 규칙이 지켜지는지 (마지막 visit = 0)
 5. 생성된 일정이 요청된 rule을 모두 지키는지 (Gemini로 검증)
 6. PR#10: Routes API로 자동 조정된 일정의 시간 연속성 검증 (체류시간, 시간 전환)
+7. PR#12: 첫/마지막 방문의 체류시간이 0인지 검증
+8. PR#13: chat에서 travel_mode를 추론하여 Routes API 호출 (로그 확인)
 """
 
 import pytest
