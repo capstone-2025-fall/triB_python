@@ -21,6 +21,17 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
+      - name: Setup EC2 directory and clone repo
+        run: |
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
+            # Create directory if it doesn't exist
+            if [ ! -d "/home/ubuntu/triB_python" ]; then
+              echo "Cloning repository..."
+              cd /home/ubuntu
+              git clone https://github.com/${{ github.repository }}.git triB_python
+            fi
+          ENDSSH
+
       - name: Create .env file
         run: |
           cat > .env << EOF
