@@ -1234,16 +1234,8 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                         temperature=0.7,
                         # Note: response_mime_type="application/json" is not supported with Google Maps tool
                         tools=[
-                            types.Tool(google_maps=types.GoogleMaps())  # ✅ Google Maps Grounding Tool
-                        ],
-                        tool_config=types.ToolConfig(
-                            retrieval_config=types.RetrievalConfig(
-                                lat_lng=types.LatLng(
-                                    latitude=center_coords["latitude"],
-                                    longitude=center_coords["longitude"]
-                                )
-                            )
-                        )
+                            types.Tool(google_search={})  # ✅ Google Search Grounding Tool (includes Maps)
+                        ]
                     ),
                 )
 
