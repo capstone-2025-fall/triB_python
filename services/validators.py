@@ -780,31 +780,36 @@ def adjust_schedule_with_new_travel_times(
             if i < len(visits) - 1:
                 next_visit = visits[i + 1]
 
-                # Calculate expected arrival at next visit
+                # Calculate expected arrival at next visit based on current departure
                 expected_next_arrival_min = departure_min + current_visit.travel_time
 
                 # Get current next arrival
                 next_arrival_min = time_to_minutes(next_visit.arrival)
 
-                # Check if adjustment is needed
-                if expected_next_arrival_min != next_arrival_min:
+                # For first/last visits, always set next arrival based on departure + travel_time
+                # (since departure = arrival for first/last, we can't adjust it)
+                if is_first or is_last:
+                    # First/last visits: departure is fixed (= arrival)
+                    # So we must adjust next visit's arrival to match
+                    next_visit.arrival = minutes_to_time(expected_next_arrival_min)
+                elif expected_next_arrival_min != next_arrival_min:
+                    # Middle visits: try to maintain next arrival time if possible
                     # Calculate required departure to arrive on time
                     required_departure_min = next_arrival_min - current_visit.travel_time
 
-                    # For first/last visits, don't enforce minimum stay
-                    min_stay_for_current = 0 if (is_first or is_last) else min_stay_minutes
-
                     # Check if we can maintain minimum stay
-                    if required_departure_min >= arrival_min + min_stay_for_current:
+                    if required_departure_min >= arrival_min + min_stay_minutes:
                         # Can maintain arrival - just adjust departure
                         current_visit.departure = minutes_to_time(required_departure_min)
+                        departure_min = required_departure_min
                     else:
                         # Cannot maintain minimum stay - must push forward next arrival
-                        # Set departure to minimum stay (0 for first/last, min_stay_minutes for middle)
-                        current_visit.departure = minutes_to_time(arrival_min + min_stay_for_current)
+                        # Set departure to minimum stay
+                        current_visit.departure = minutes_to_time(arrival_min + min_stay_minutes)
+                        departure_min = arrival_min + min_stay_minutes
 
                         # Push forward next visit and cascade
-                        new_next_arrival_min = arrival_min + min_stay_for_current + current_visit.travel_time
+                        new_next_arrival_min = departure_min + current_visit.travel_time
                         next_visit.arrival = minutes_to_time(new_next_arrival_min)
 
                         # Cascade adjustment to all subsequent visits

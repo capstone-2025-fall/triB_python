@@ -12,6 +12,7 @@ from services.validators import (
     validate_days_count,
     time_to_minutes,
     minutes_to_time,
+    is_first_or_last_visit,
     update_travel_times_from_routes,
     adjust_schedule_with_new_travel_times
 )
@@ -1259,3 +1260,173 @@ def test_adjust_schedule_with_new_travel_times_multiple_days():
     # Day 2: first visit departure adjusted
     assert adjusted.itinerary[1].visits[0].arrival == "09:00"
     assert adjusted.itinerary[1].visits[0].departure == "09:55"  # 10:10 - 15
+
+
+# ============================================================================
+# PR#12: Tests for is_first_or_last_visit and zero stay duration
+# ============================================================================
+
+def test_is_first_or_last_visit_single_visit():
+    """Test is_first_or_last_visit with a single visit (both first and last)."""
+    is_first, is_last = is_first_or_last_visit(0, 1)
+    assert is_first is True
+    assert is_last is True
+
+
+def test_is_first_or_last_visit_multiple_visits():
+    """Test is_first_or_last_visit with multiple visits."""
+    # First visit (index 0 of 3)
+    is_first, is_last = is_first_or_last_visit(0, 3)
+    assert is_first is True
+    assert is_last is False
+
+    # Middle visit (index 1 of 3)
+    is_first, is_last = is_first_or_last_visit(1, 3)
+    assert is_first is False
+    assert is_last is False
+
+    # Last visit (index 2 of 3)
+    is_first, is_last = is_first_or_last_visit(2, 3)
+    assert is_first is False
+    assert is_last is True
+
+
+def test_adjust_schedule_first_last_zero_stay():
+    """Test that first and last visits have zero stay duration (departure = arrival)."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Hotel (Start)",
+                        name_address="Hotel Address",
+                        place_tag=PlaceTag.HOME,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="08:00",
+                        departure="08:30",  # Will be adjusted to 08:00
+                        travel_time=20
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Tourist Spot",
+                        name_address="Tourist Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5700,
+                        longitude=126.9800,
+                        arrival="08:20",  # Consistent with first visit departure (08:00) + travel_time (20)
+                        departure="10:00",
+                        travel_time=15
+                    ),
+                    Visit2(
+                        order=3,
+                        display_name="Hotel (End)",
+                        name_address="Hotel Address",
+                        place_tag=PlaceTag.HOME,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="10:15",  # Consistent with second visit departure + travel_time
+                        departure="10:45",  # Will be adjusted to 10:15
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    adjusted = adjust_schedule_with_new_travel_times(itinerary, min_stay_minutes=30)
+
+    # First visit: departure should equal arrival (zero stay)
+    assert adjusted.itinerary[0].visits[0].arrival == "08:00"
+    assert adjusted.itinerary[0].visits[0].departure == "08:00"
+
+    # Middle visit: should have minimum stay of 30 minutes
+    # Arrival will be adjusted based on first visit departure + travel_time = 08:00 + 20 = 08:20
+    assert adjusted.itinerary[0].visits[1].arrival == "08:20"
+    arrival_min = time_to_minutes(adjusted.itinerary[0].visits[1].arrival)
+    departure_min = time_to_minutes(adjusted.itinerary[0].visits[1].departure)
+    stay_duration = departure_min - arrival_min
+    assert stay_duration >= 30, f"Middle visit stay duration {stay_duration} < 30 minutes"
+
+    # Last visit: departure should equal arrival (zero stay)
+    # Arrival will be adjusted based on second visit departure + travel_time
+    last_visit = adjusted.itinerary[0].visits[2]
+    assert last_visit.departure == last_visit.arrival
+
+
+def test_adjust_schedule_middle_visits_min_stay():
+    """Test that middle visits maintain minimum stay duration."""
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Start",
+                        name_address="Start Address",
+                        place_tag=PlaceTag.HOME,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:00",
+                        departure="09:00",
+                        travel_time=10
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Spot A",
+                        name_address="Spot A Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=37.5700,
+                        longitude=126.9800,
+                        arrival="09:10",
+                        departure="09:15",  # Only 5 min stay, should be adjusted to 30 min
+                        travel_time=10
+                    ),
+                    Visit2(
+                        order=3,
+                        display_name="Spot B",
+                        name_address="Spot B Address",
+                        place_tag=PlaceTag.CAFE,
+                        latitude=37.5720,
+                        longitude=126.9850,
+                        arrival="09:25",
+                        departure="09:30",  # Only 5 min stay, should be adjusted
+                        travel_time=10
+                    ),
+                    Visit2(
+                        order=4,
+                        display_name="End",
+                        name_address="End Address",
+                        place_tag=PlaceTag.HOME,
+                        latitude=37.5665,
+                        longitude=126.9780,
+                        arrival="09:40",
+                        departure="09:40",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000
+    )
+
+    adjusted = adjust_schedule_with_new_travel_times(itinerary, min_stay_minutes=30)
+
+    # First visit: zero stay
+    assert adjusted.itinerary[0].visits[0].departure == adjusted.itinerary[0].visits[0].arrival
+
+    # Middle visits: minimum 30 minutes stay
+    for i in [1, 2]:
+        visit = adjusted.itinerary[0].visits[i]
+        arrival_min = time_to_minutes(visit.arrival)
+        departure_min = time_to_minutes(visit.departure)
+        stay_duration = departure_min - arrival_min
+        assert stay_duration >= 30, f"Visit {i+1} stay duration {stay_duration} < 30 minutes"
+
+    # Last visit: zero stay
+    last_visit = adjusted.itinerary[0].visits[3]
+    assert last_visit.departure == last_visit.arrival
