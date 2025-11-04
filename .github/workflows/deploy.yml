@@ -1,0 +1,64 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Manual trigger option
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
+          DBSCAN_EPS_KM=${{ secrets.DBSCAN_EPS_KM }}
+          DBSCAN_MIN_SAMPLES=${{ secrets.DBSCAN_MIN_SAMPLES }}
+          EOF
+
+      - name: Copy .env to EC2
+        run: |
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no .env ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/ubuntu/triB_python/.env
+
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
+            cd /home/ubuntu/triB_python
+            git pull origin main
+            bash scripts/deploy.sh
+          ENDSSH
+
+      - name: Health Check
+        run: |
+          sleep 10
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "curl -f http://localhost:8000/ || exit 1"
+
+      - name: Deployment Success
+        if: success()
+        run: |
+          echo "========================================="
+          echo "Deployment successful!"
+          echo "API URL: http://${{ secrets.EC2_HOST }}:8000"
+          echo "========================================="
+
+      - name: Deployment Failed
+        if: failure()
+        run: |
+          echo "========================================="
+          echo "Deployment failed! Check logs above."
+          echo "========================================="
+          exit 1

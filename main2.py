@@ -19,9 +19,13 @@ app = FastAPI(
 )
 
 # CORS 설정
+# 로컬 개발 및 프로덕션 서버 주소 허용
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8080",           # 로컬 개발 환경
+        "http://13.209.157.80:8080",       # 프로덕션 Spring Boot 서버
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
