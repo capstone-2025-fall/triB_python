@@ -784,11 +784,15 @@ async def test_itinerary_generation_v2_e2e():
     total_checks = 0
 
     print(f"\nValidating schedule continuity and stay times:")
+    print(f"  Note: First/last visits of each day have zero stay duration (PR#12)")
     for day_data in data["itinerary"]:
         day_num = day_data["day"]
         visits = day_data["visits"]
 
         for i, visit in enumerate(visits):
+            is_first = (i == 0)
+            is_last = (i == len(visits) - 1)
+
             # 체류시간 검증 (departure >= arrival)
             arrival_time = visit["arrival"]
             departure_time = visit["departure"]
@@ -797,16 +801,32 @@ async def test_itinerary_generation_v2_e2e():
             departure_minutes = int(departure_time.split(":")[0]) * 60 + int(departure_time.split(":")[1])
 
             stay_time = departure_minutes - arrival_minutes
-            if stay_time < 0:
-                adjustment_issues.append({
-                    "type": "negative_stay_time",
-                    "day": day_num,
-                    "place": visit["display_name"],
-                    "arrival": arrival_time,
-                    "departure": departure_time,
-                    "stay_time": stay_time
-                })
-                print(f"✗ Day {day_num}: {visit['display_name']} - Negative stay time ({stay_time}min)")
+
+            # PR#12: 첫/마지막 방문은 체류시간 0이 정상
+            if is_first or is_last:
+                if stay_time != 0:
+                    adjustment_issues.append({
+                        "type": "first_last_nonzero_stay",
+                        "day": day_num,
+                        "place": visit["display_name"],
+                        "position": "first" if is_first else "last",
+                        "arrival": arrival_time,
+                        "departure": departure_time,
+                        "stay_time": stay_time
+                    })
+                    print(f"✗ Day {day_num}: {visit['display_name']} - {('First' if is_first else 'Last')} visit should have 0 stay time, got {stay_time}min")
+            else:
+                # 중간 방문은 음수 체류시간만 체크
+                if stay_time < 0:
+                    adjustment_issues.append({
+                        "type": "negative_stay_time",
+                        "day": day_num,
+                        "place": visit["display_name"],
+                        "arrival": arrival_time,
+                        "departure": departure_time,
+                        "stay_time": stay_time
+                    })
+                    print(f"✗ Day {day_num}: {visit['display_name']} - Negative stay time ({stay_time}min)")
 
             total_checks += 1
 
@@ -856,11 +876,14 @@ async def test_itinerary_generation_v2_e2e():
         for issue in adjustment_issues:
             if issue["type"] == "negative_stay_time":
                 print(f"  - Day {issue['day']}: {issue['place']} has negative stay time ({issue['stay_time']}min)")
+            elif issue["type"] == "first_last_nonzero_stay":
+                print(f"  - Day {issue['day']}: {issue['place']} ({issue['position']} visit) should have 0 stay time, got {issue['stay_time']}min")
             elif issue["type"] == "time_continuity":
                 print(f"  - Day {issue['day']}: {issue['from']} → {issue['to']} time gap ({issue['deviation']}min)")
     else:
         print(f"\n✓ All {total_checks} schedule checks passed!")
-        print(f"  - All stay times are non-negative")
+        print(f"  - First/last visits have zero stay duration (PR#12)")
+        print(f"  - Middle visits have non-negative stay times")
         print(f"  - All time transitions are continuous (within ±2min tolerance)")
 
     # 보고서 생성
