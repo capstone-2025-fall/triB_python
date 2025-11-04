@@ -274,7 +274,9 @@ class ItineraryGeneratorService2:
 **Priority 1 충돌 시**:
 - must_visit 우선, 날짜 재조정으로 운영시간 맞춤
 
-### 2-B. 이동시간 정확성 및 Google Maps Grounding Tool 활용
+### 2-B. 이동시간 계산 가이드
+
+**중요**: travel_time은 참고용으로 생성하되, 일정 생성 후 Routes API로 실제값이 자동 대체됩니다. Google Maps Grounding Tool은 travel_time 추정에 활용할 수 있습니다.
 
 **필수 사항**:
 - Google Maps Grounding Tool을 사용하여 실제 이동시간을 계산하세요
@@ -835,6 +837,8 @@ Result:
 
 ### travel_time 필드 정의 (매우 중요)
 
+**중요**: travel_time은 참고용으로 생성하며, 실제값은 일정 생성 후 Routes API로 자동 대체됩니다.
+
 **계산 규칙**:
 - **첫 번째 방문의 travel_time**: 첫 번째 장소 → 두 번째 장소 이동시간
 - **중간 방문의 travel_time**: 현재 장소 → 다음 장소 이동시간
@@ -974,11 +978,6 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
   - 각 방문의 arrival/departure가 운영시간 내
   - 휴무일에 방문하는 장소가 없음
   - Google Maps에서 요일별 운영시간 확인
-- [ ] **travel_time이 올바르게 계산되었는가?**
-  - 첫 번째 visit: 첫 번째 → 두 번째 이동시간
-  - 중간 visit: 현재 → 다음 이동시간
-  - 마지막 visit: 0
-  - 각 연속된 방문: visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 
 ### 제약사항 검증
 - [ ] **숙소(HOME) 출발/귀가 일정인가?**
