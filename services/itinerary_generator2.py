@@ -29,6 +29,36 @@ class ItineraryGeneratorService2:
         self.model_name = "gemini-2.5-flash"
         logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-pro and Google Maps grounding")
 
+    def _call_gemini_api(self, prompt: str):
+        """
+        Call Gemini API for content generation.
+
+        This method is separated to enable retry decorator application.
+        PR#15: Extracted for exponential backoff retry strategy.
+
+        Args:
+            prompt: The prompt to send to Gemini
+
+        Returns:
+            Response from Gemini API
+
+        Raises:
+            Exception: For API call failures (HTTP errors, timeouts, etc.)
+        """
+        logger.info("Starting Gemini API call with Google Maps grounding...")
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.7,
+                # Note: response_mime_type="application/json" is not supported with Google Maps tool
+                tools=[
+                    types.Tool(google_search={})  # ✅ Google Search Grounding Tool (includes Maps)
+                ]
+            ),
+        )
+        return response
+
     def _create_prompt_v2(
         self,
         request: ItineraryRequest2,
@@ -1226,18 +1256,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                 logger.debug(f"Prompt length: {len(prompt)} characters")
 
                 # Gemini API 호출 (Google Maps Grounding 활성화)
-                logger.info("Calling Gemini API with Google Maps grounding...")
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.7,
-                        # Note: response_mime_type="application/json" is not supported with Google Maps tool
-                        tools=[
-                            types.Tool(google_search={})  # ✅ Google Search Grounding Tool (includes Maps)
-                        ]
-                    ),
-                )
+                response = self._call_gemini_api(prompt)
 
                 # 응답 텍스트 추출
                 response_text = response.text
