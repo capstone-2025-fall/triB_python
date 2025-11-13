@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+import time
 import httpx
 from typing import List, Dict
 from datetime import timedelta
@@ -38,7 +39,7 @@ class ItineraryGeneratorService2:
         Call Gemini API for content generation with exponential backoff retry.
 
         This method is separated to enable retry decorator application.
-        PR#15: Exponential backoff retry strategy applied.
+        PR#15: Exponential backoff retry strategy applied with detailed logging.
 
         This method will automatically retry on:
         - HTTP 5xx errors (server errors)
@@ -61,8 +62,19 @@ class ItineraryGeneratorService2:
             httpx.TimeoutException: For timeout errors (after all retries exhausted)
             Exception: For other API call failures
         """
+        # PR#15: Record start time for performance tracking
+        start_time = time.time()
+
         try:
-            logger.info("Starting Gemini API call with Google Maps grounding...")
+            # PR#15: Structured logging with extra fields
+            logger.info(
+                "Starting Gemini API call with Google Maps grounding",
+                extra={
+                    "model": self.model_name,
+                    "prompt_length": len(prompt),
+                }
+            )
+
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
@@ -74,16 +86,57 @@ class ItineraryGeneratorService2:
                     ]
                 ),
             )
-            logger.info("Gemini API call successful")
+
+            # PR#15: Log success with timing information
+            elapsed_time = time.time() - start_time
+            logger.info(
+                "Gemini API call successful",
+                extra={
+                    "elapsed_time": f"{elapsed_time:.2f}s",
+                    "response_length": len(response.text) if hasattr(response, 'text') else 0,
+                }
+            )
             return response
+
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error during Gemini API call: {e.response.status_code}")
+            # PR#15: Log error with timing and details
+            elapsed_time = time.time() - start_time
+            logger.error(
+                f"HTTP error during Gemini API call: {e.response.status_code}",
+                extra={
+                    "elapsed_time": f"{elapsed_time:.2f}s",
+                    "error_type": "HTTPStatusError",
+                    "status_code": e.response.status_code,
+                }
+            )
             raise
+
         except httpx.TimeoutException as e:
-            logger.error(f"Timeout during Gemini API call: {e}")
+            # PR#15: Log timeout with timing
+            elapsed_time = time.time() - start_time
+            error_msg = str(e)[:200]  # Truncate to 200 chars
+            logger.error(
+                f"Timeout during Gemini API call",
+                extra={
+                    "elapsed_time": f"{elapsed_time:.2f}s",
+                    "error_type": "TimeoutException",
+                    "error_message": error_msg,
+                }
+            )
             raise
+
         except Exception as e:
-            logger.error(f"Unexpected error during Gemini API call: {type(e).__name__}: {e}")
+            # PR#15: Log unexpected error with timing and details
+            elapsed_time = time.time() - start_time
+            error_msg = str(e)[:200]  # Truncate to 200 chars
+            logger.error(
+                f"Unexpected error during Gemini API call: {type(e).__name__}",
+                extra={
+                    "elapsed_time": f"{elapsed_time:.2f}s",
+                    "error_type": type(e).__name__,
+                    "error_message": error_msg,
+                }
+            )
             raise
 
     def _create_prompt_v2(
