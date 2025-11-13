@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+import httpx
 from typing import List, Dict
 from datetime import timedelta
 from google import genai
@@ -16,6 +17,8 @@ from services.validators import (
     update_travel_times_from_routes,
     adjust_schedule_with_new_travel_times
 )
+# PR#15: Retry helper import 추가
+from utils.retry_helpers import gemini_generate_retry
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +32,23 @@ class ItineraryGeneratorService2:
         self.model_name = "gemini-2.5-flash"
         logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-pro and Google Maps grounding")
 
+    @gemini_generate_retry
     def _call_gemini_api(self, prompt: str):
         """
-        Call Gemini API for content generation.
+        Call Gemini API for content generation with exponential backoff retry.
 
         This method is separated to enable retry decorator application.
-        PR#15: Extracted for exponential backoff retry strategy.
+        PR#15: Exponential backoff retry strategy applied.
+
+        This method will automatically retry on:
+        - HTTP 5xx errors (server errors)
+        - HTTP 429 errors (rate limiting)
+        - Network timeouts
+        - Connection errors
+
+        Retry strategy:
+        - Max attempts: 5
+        - Wait time: 2s -> 4s -> 8s -> 16s -> 32s (max 60s)
 
         Args:
             prompt: The prompt to send to Gemini
@@ -43,21 +57,34 @@ class ItineraryGeneratorService2:
             Response from Gemini API
 
         Raises:
-            Exception: For API call failures (HTTP errors, timeouts, etc.)
+            httpx.HTTPStatusError: For HTTP errors (after all retries exhausted)
+            httpx.TimeoutException: For timeout errors (after all retries exhausted)
+            Exception: For other API call failures
         """
-        logger.info("Starting Gemini API call with Google Maps grounding...")
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.7,
-                # Note: response_mime_type="application/json" is not supported with Google Maps tool
-                tools=[
-                    types.Tool(google_search={})  # ✅ Google Search Grounding Tool (includes Maps)
-                ]
-            ),
-        )
-        return response
+        try:
+            logger.info("Starting Gemini API call with Google Maps grounding...")
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.7,
+                    # Note: response_mime_type="application/json" is not supported with Google Maps tool
+                    tools=[
+                        types.Tool(google_search={})  # ✅ Google Search Grounding Tool (includes Maps)
+                    ]
+                ),
+            )
+            logger.info("Gemini API call successful")
+            return response
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error during Gemini API call: {e.response.status_code}")
+            raise
+        except httpx.TimeoutException as e:
+            logger.error(f"Timeout during Gemini API call: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during Gemini API call: {type(e).__name__}: {e}")
+            raise
 
     def _create_prompt_v2(
         self,
@@ -1422,8 +1449,12 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                 # 검증 실패 예외는 그대로 전달
                 raise
             except Exception as e:
-                logger.error(f"V2 itinerary generation failed (attempt {attempt + 1}): {str(e)}", exc_info=True)
-                # API/JSON 에러는 재시도하지 않고 즉시 실패
+                logger.error(
+                    f"V2 itinerary generation failed (attempt {attempt + 1}) after all API retries: {str(e)}",
+                    exc_info=True
+                )
+                # PR#15: API 에러는 이미 _call_gemini_api에서 retry 완료
+                # 여기 도달했다면 모든 재시도가 실패한 것이므로 즉시 실패
                 raise
 
 
