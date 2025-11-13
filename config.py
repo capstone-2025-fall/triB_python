@@ -1,4 +1,5 @@
 import os
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -29,6 +30,20 @@ class Settings(BaseSettings):
     # Clustering
     dbscan_eps_km: float = float(os.getenv("DBSCAN_EPS_KM", "7.0"))
     dbscan_min_samples: int = int(os.getenv("DBSCAN_MIN_SAMPLES", "2"))
+
+    # Gemini API Retry Configuration (PR#14)
+    gemini_max_retries: int = Field(
+        default=5,
+        description="Maximum number of retry attempts for Gemini API calls"
+    )
+    gemini_base_delay: float = Field(
+        default=2.0,
+        description="Base delay in seconds for exponential backoff"
+    )
+    gemini_max_delay: float = Field(
+        default=60.0,
+        description="Maximum delay in seconds between retries"
+    )
 
     class Config:
         env_file = ".env"
