@@ -13,6 +13,10 @@ from config import settings
 import json
 from google import genai
 from google.genai import types
+import logging
+from utils.retry_helpers import gemini_validate_retry
+
+logger = logging.getLogger(__name__)
 
 
 def infer_travel_mode(chat: List[str]) -> str:
@@ -455,6 +459,51 @@ def validate_operating_hours_with_grounding(
     }
 
 
+@gemini_validate_retry
+def _call_gemini_validation(
+    client,
+    model: str,
+    prompt: str,
+    temperature: float = 0.3
+) -> Any:
+    """
+    Call Gemini API for rule validation with retry.
+
+    PR#16: Exponential backoff retry strategy applied.
+
+    Retry strategy:
+    - Max attempts: 3
+    - Wait time: 2s -> 4s -> 8s -> 16s -> 32s (max 45s)
+    - Retries on: 5xx errors, 429 rate limit, network timeouts
+    - No retry on: 4xx client errors (except 429)
+
+    Args:
+        client: Gemini client instance
+        model: Model name to use for validation
+        prompt: Validation prompt
+        temperature: Temperature for generation (default: 0.3)
+
+    Returns:
+        Gemini API response
+    """
+    logger.info(f"Calling Gemini validation API with model: {model}")
+
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=temperature,
+                response_mime_type="application/json"
+            )
+        )
+        logger.info("Gemini validation API call successful")
+        return response
+    except Exception as e:
+        logger.error(f"Gemini validation API call failed: {str(e)}")
+        raise
+
+
 def validate_rules_with_gemini(
     itinerary: ItineraryResponse2,
     rules: List[str]
@@ -537,14 +586,12 @@ def validate_rules_with_gemini(
 - 예: "둘째날 유니버설 하루 종일"은 둘째날에 유니버설이 대부분의 시간을 차지하면 OK"""
 
     try:
-        # Call Gemini API
-        response = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.3,  # Low temperature for consistent validation
-                response_mime_type="application/json"
-            )
+        # Call Gemini API via extracted method
+        response = _call_gemini_validation(
+            client=client,
+            model="gemini-2.5-flash",
+            prompt=prompt,
+            temperature=0.3
         )
 
         result_text = response.text.strip()
