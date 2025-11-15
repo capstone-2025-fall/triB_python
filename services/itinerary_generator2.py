@@ -328,12 +328,13 @@ class ItineraryGeneratorService2:
    - "맛있는 라멘 가게 가고 싶다" → Google Maps로 라멘집 검색하여 추가
    - "쇼핑 많이 하고 싶어" → 쇼핑 장소 비중 높이기
 
-3. **이동 수단 추론** (travel_time 계산에 반영):
+3. **이동 수단 추론** (travel_time 계산에 반영 및 JSON 응답에 포함):
    - "렌터카", "차 빌려서", "자동차" → **DRIVE**
    - "지하철", "버스", "대중교통" → **TRANSIT**
    - "걸어서", "도보", "산책" → **WALK**
    - "자전거" → **BICYCLE**
    - 언급 없음 → **TRANSIT (기본값)**
+   - **중요**: 추론한 이동 수단을 JSON 응답의 "travel_mode" 필드에 반드시 포함하세요
 
 ### 1-E. 후보 장소(places) 우선 선택, 부족 시 Gemini 추천
 
@@ -1085,6 +1086,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
       "visits": [...]
     }}
   ],
+  "travel_mode": "TRANSIT",
   "budget": 450000
 }}
 ```
@@ -1094,11 +1096,11 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 1. **순수 JSON만 반환하세요**:
    - 마크다운 코드 블록(```)이나 설명 텍스트 없이 JSON만 출력하세요
    - ❌ 잘못된 예: ```json ... ```
-   - ⭕ 올바른 예: {{{{"itinerary": [...], "budget": 500000}}}}
+   - ⭕ 올바른 예: {{{{"itinerary": [...], "travel_mode": "TRANSIT", "budget": 500000}}}}
 
 2. **JSON 구조를 정확히 지키세요**:
-   - 최상위는 객체이며, "itinerary" 배열과 "budget" 숫자 두 개의 속성만 가집니다
-   - budget은 itinerary 배열 밖에 위치해야 합니다 (배열 안에 넣지 마세요)
+   - 최상위는 객체이며, "itinerary" 배열, "travel_mode" 문자열, "budget" 숫자 세 개의 속성을 가집니다
+   - travel_mode와 budget은 itinerary 배열 밖에 위치해야 합니다 (배열 안에 넣지 마세요)
 
 3. **유효한 JSON 형식**:
    - 쉼표, 중괄호, 대괄호를 정확히 사용하세요
@@ -1141,10 +1143,10 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 - [ ] **순수 JSON만 출력했는가?**
   - 마크다운 코드 블록(```) 없음
   - 설명 텍스트 없음
-  - {{ "itinerary": [...], "budget": 500000 }} 형식
-- [ ] **budget이 itinerary 배열 밖에 있는가?**
-  - 최상위 객체: {{ "itinerary": [...], "budget": 숫자 }}
-  - budget이 배열 안에 들어가 있으면 안 됨
+  - {{ "itinerary": [...], "travel_mode": "TRANSIT", "budget": 500000 }} 형식
+- [ ] **travel_mode와 budget이 itinerary 배열 밖에 있는가?**
+  - 최상위 객체: {{ "itinerary": [...], "travel_mode": "TRANSIT", "budget": 숫자 }}
+  - travel_mode와 budget이 배열 안에 들어가 있으면 안 됨
 
 ---
 
@@ -1159,7 +1161,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 
 2. **순수 JSON만 출력하는가?**
    - ❌ ```json {{{{ ... }}}} ```
-   - ⭕ {{"itinerary": [...], "budget": 500000}}
+   - ⭕ {{"itinerary": [...], "travel_mode": "TRANSIT", "budget": 500000}}
 
 3. **모든 필드가 올바르게 채워졌는가?**
    - 모든 장소에 Google Maps로 조회한 정확한 좌표, 주소
@@ -1453,9 +1455,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                     raise Exception(f"Invalid itinerary format: {str(e)}")
 
                 # PR#10: Routes API로 실제 이동시간 수집 및 일정 조정
-                # PR#13: chat에서 travel_mode 추론
-                travel_mode = infer_travel_mode(request.chat)
-                logger.info(f"🚗 Inferred travel mode: {travel_mode}")
+                # Use travel_mode from Gemini response (fallback to inference from chat if not present)
+                travel_mode = getattr(itinerary_response, 'travel_mode', None) or infer_travel_mode(request.chat)
+                logger.info(f"🚗 Travel mode from Gemini: {travel_mode}")
                 logger.info(f"🚗 Fetching actual travel times from Routes API (mode: {travel_mode})...")
                 try:
                     actual_travel_times = fetch_actual_travel_times(itinerary_response, travel_mode=travel_mode)

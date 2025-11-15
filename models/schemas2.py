@@ -121,6 +121,10 @@ class ItineraryResponse2(BaseModel):
         ...,
         description="전체 일정"
     )
+    travel_mode: str = Field(
+        ...,
+        description="이동 수단 (DRIVE, TRANSIT, WALK, BICYCLE)"
+    )
     budget: int = Field(
         ...,
         description="1인당 예상 예산 (원화 기준)"
