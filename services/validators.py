@@ -266,11 +266,15 @@ def fetch_actual_travel_times(
                         }
                     },
                     "travelMode": travel_mode,
-                    "routingPreference": "TRAFFIC_AWARE" if travel_mode == "DRIVE" else "TRAFFIC_UNAWARE",
                     "computeAlternativeRoutes": False,
                     "languageCode": "ko-KR",
                     "units": "METRIC"
                 }
+
+                # Only add routingPreference for DRIVE mode
+                # TRANSIT, WALK, BICYCLE modes don't support routingPreference
+                if travel_mode == "DRIVE":
+                    request_body["routingPreference"] = "TRAFFIC_AWARE"
 
                 headers = {
                     "Content-Type": "application/json",
@@ -299,6 +303,15 @@ def fetch_actual_travel_times(
                         # Store the actual travel time
                         key = (day.day, current_visit.order)
                         travel_times[key] = actual_time_minutes
+                else:
+                    # Log error response for debugging
+                    error_body = response.text
+                    logger.warning(
+                        f"Routes API returned {response.status_code} for Day {day.day}, "
+                        f"order {current_visit.order} → {current_visit.order + 1}\n"
+                        f"Request: {json.dumps(request_body, indent=2)}\n"
+                        f"Response: {error_body}"
+                    )
 
             except Exception as e:
                 # Log error but continue with other routes

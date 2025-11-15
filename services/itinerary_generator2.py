@@ -428,7 +428,39 @@ next_place.arrival = current_place.departure + travel_time
 
 ### 3-A. 체류시간 적절성
 
-각 장소별 적절한 체류시간을 고려하세요:
+**⚠️ 중요: 첫 번째와 마지막 방문지는 체류시간 0으로 설정**
+
+하루 일정의 첫 번째와 마지막 visit은 출발/도착을 의미하므로 체류시간이 없어야 합니다:
+- **첫 번째 visit**: `departure = arrival` (출발 시간만 의미)
+- **마지막 visit**: `departure = arrival` (도착 시간만 의미)
+- **예시**:
+  ```json
+  "visits": [
+    {{{{
+      "order": 1,
+      "display_name": "호텔",
+      "arrival": "09:00",
+      "departure": "09:00",  // 체류시간 0
+      "travel_time": 20
+    }}}},
+    {{{{
+      "order": 2,
+      "display_name": "오사카 성",
+      "arrival": "09:20",
+      "departure": "11:50",  // 체류 2.5시간
+      "travel_time": 30
+    }}}},
+    {{{{
+      "order": 3,
+      "display_name": "호텔",
+      "arrival": "12:20",
+      "departure": "12:20",  // 체류시간 0
+      "travel_time": 0
+    }}}}
+  ]
+  ```
+
+**중간 방문지의 적절한 체류시간**:
 - **대형 테마파크** (유니버설 스튜디오 등): 6-10시간
 - **주요 관광지** (성, 사원 등): 1.5-3시간
 - **수족관/박물관**: 2-3시간
@@ -437,7 +469,7 @@ next_place.arrival = current_place.departure + travel_time
 - **카페/휴식**: 0.5-1시간
 
 **적용 방법**:
-- departure = arrival + 적절한 체류시간
+- 중간 방문지: departure = arrival + 적절한 체류시간
 - 장소의 특성과 사용자 취향(chat)을 고려하여 조정
 - 예: "여유롭게" 선호 → 체류시간 길게 설정
 
@@ -523,10 +555,15 @@ next_place.arrival = current_place.departure + travel_time
   - 예: "알차게 많이 보고 싶어" → 12-14시간
 
 ### 숙소(HOME) 출발/귀가 원칙
-- **기본 원칙**: 하루 일정의 시작과 끝은 숙소여야 합니다
+- **기본 원칙**: 하루 일정의 시작과 끝은 숙소여야 합니다. 그 외에 숙소 방문은 하지 않습니다.
   - 첫 visit: 숙소 출발 (place_tag=HOME)
   - 마지막 visit: 숙소 귀가 (place_tag=HOME)
   - 명시적 요청이 없는 한 이 원칙을 반드시 준수하세요
+
+### 장소 방문 횟수 제한
+- **기본 원칙**: 모든 장소는 전체 일정 동안 한 번만 방문해야 합니다 (단, 숙소는 제외)
+- **숙소(HOME) 예외**:
+  - 숙소는 매일 출발/귀가 지점으로 사용되므로 여러 번 방문 가능  
 
 - **예외 케이스 우선순위** (높은 순서대로):
   1. **rule 필드의 명시적 지시** (최우선)
@@ -1057,7 +1094,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 1. **순수 JSON만 반환하세요**:
    - 마크다운 코드 블록(```)이나 설명 텍스트 없이 JSON만 출력하세요
    - ❌ 잘못된 예: ```json ... ```
-   - ⭕ 올바른 예: {{ "itinerary": [...], "budget": 500000 }}
+   - ⭕ 올바른 예: {{{{"itinerary": [...], "budget": 500000}}}}
 
 2. **JSON 구조를 정확히 지키세요**:
    - 최상위는 객체이며, "itinerary" 배열과 "budget" 숫자 두 개의 속성만 가집니다
@@ -1121,8 +1158,8 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
    - 제약사항 및 JSON 형식 검증 완료
 
 2. **순수 JSON만 출력하는가?**
-   - ❌ ```json {{ ... }} ```
-   - ⭕ {{ "itinerary": [...], "budget": 500000 }}
+   - ❌ ```json {{{{ ... }}}} ```
+   - ⭕ {{"itinerary": [...], "budget": 500000}}
 
 3. **모든 필드가 올바르게 채워졌는가?**
    - 모든 장소에 Google Maps로 조회한 정확한 좌표, 주소
