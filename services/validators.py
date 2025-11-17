@@ -602,7 +602,7 @@ def validate_rules_with_gemini(
         # Call Gemini API via extracted method
         response = _call_gemini_validation(
             client=client,
-            model="gemini-2.5-flash",
+            model="gemini-2.5-flash-lite",
             prompt=prompt,
             temperature=0.3
         )

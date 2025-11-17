@@ -30,8 +30,8 @@ class ItineraryGeneratorService2:
     def __init__(self):
         """Gemini 클라이언트 초기화"""
         self.client = genai.Client(api_key=settings.google_api_key)
-        self.model_name = "gemini-2.5-flash"
-        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-pro and Google Maps grounding")
+        self.model_name = "gemini-2.5-flash-lite"
+        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-flash-lite and Google Maps grounding")
 
     @gemini_generate_retry
     def _call_gemini_api(self, prompt: str):
