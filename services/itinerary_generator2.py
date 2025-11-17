@@ -965,15 +965,17 @@ Result:
    - 예: latitude: 34.687315, longitude: 135.526199
    - Google Maps에서 조회한 정확한 좌표 사용
 
-6. **arrival** (문자열):
+6. **arrival** (문자열) - **필수 필드**:
    - 해당 장소에 도착하는 시간
    - 24시간 형식 "HH:MM" (예: "09:00", "14:30")
+   - **모든 visit에 반드시 포함되어야 함**
    - 첫 번째 visit: 하루 일정 시작 시간 (예: 09:00)
    - 이후 visit: 이전 장소의 departure + travel_time으로 계산
 
-7. **departure** (문자열):
+7. **departure** (문자열) - **필수 필드**:
    - 해당 장소에서 떠나는 시간
    - 24시간 형식 "HH:MM" (예: "11:30", "20:00")
+   - **모든 visit에 반드시 포함되어야 함**
    - arrival + 해당 장소 체류시간으로 계산
    - 체류시간은 3-A의 가이드라인을 참고하세요
    - 예: 오사카 성 arrival "09:00" → 2.5시간 체류 → departure "11:30"
@@ -1147,6 +1149,10 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 - [ ] **travel_mode와 budget이 itinerary 배열 밖에 있는가?**
   - 최상위 객체: {{ "itinerary": [...], "travel_mode": "TRANSIT", "budget": 숫자 }}
   - travel_mode와 budget이 배열 안에 들어가 있으면 안 됨
+- [ ] **모든 visit에 arrival이 포함되어 있는가?**
+  - 모든 visit 객체에 "arrival" 필드가 반드시 포함되어야 함 (HH:MM 형식)
+  - 모든 visit 객체에 "departure" 필드가 반드시 포함되어야 함 (HH:MM 형식)
+  - 예: "arrival": "09:00", "departure": "11:30"
 
 ---
 
@@ -1165,7 +1171,8 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 
 3. **모든 필드가 올바르게 채워졌는가?**
    - 모든 장소에 Google Maps로 조회한 정확한 좌표, 주소
-   - 모든 arrival/departure가 "HH:MM" 형식
+   - **모든 visit에 arrival 필드가 포함되어 있고 "HH:MM" 형식인가?**
+   - **모든 visit에 departure 필드가 포함되어 있고 "HH:MM" 형식인가?**
    - 모든 travel_time이 올바르게 계산됨
 
 ### 응답 생성
