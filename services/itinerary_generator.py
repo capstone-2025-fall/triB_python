@@ -15,7 +15,7 @@ genai.configure(api_key=settings.google_api_key)
 
 class ItineraryGeneratorService:
     def __init__(self):
-        self.model = genai.GenerativeModel("gemini-2.5-flash-lite")
+        self.model = genai.GenerativeModel("gemini-2.5-pro")
 
     def _parse_opening_hours_desc(self, opening_hours_desc: str) -> Dict[str, str]:
         """

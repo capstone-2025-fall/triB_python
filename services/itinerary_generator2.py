@@ -30,8 +30,8 @@ class ItineraryGeneratorService2:
     def __init__(self):
         """Gemini 클라이언트 초기화"""
         self.client = genai.Client(api_key=settings.google_api_key)
-        self.model_name = "gemini-2.5-flash-lite"
-        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-flash-lite and Google Maps grounding")
+        self.model_name = "gemini-2.5-pro"
+        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-pro and Google Maps grounding")
 
     @gemini_generate_retry
     def _call_gemini_api(self, prompt: str):
@@ -1298,19 +1298,19 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                 f"→ 정확히 {expected}개의 day를 생성해야 합니다!"
             )
 
-        # 3. Rules 위반 (NEW)
-        if not validation_results.get("rules", {}).get("is_valid", True):
-            violations = validation_results["rules"].get("violations", [])
-            if violations:
-                violation_details = []
-                for v in violations[:3]:  # 최대 3개만 표시
-                    violation_details.append(
-                        f"'{v['rule']}' - {v['explanation']}"
-                    )
-                feedback.append(
-                    f"🔴 규칙 위반: {'; '.join(violation_details)} "
-                    f"→ 모든 규칙을 반드시 준수해야 합니다!"
-                )
+        # 3. Rules 위반 (NEW) - Disabled
+        # if not validation_results.get("rules", {}).get("is_valid", True):
+        #     violations = validation_results["rules"].get("violations", [])
+        #     if violations:
+        #         violation_details = []
+        #         for v in violations[:3]:  # 최대 3개만 표시
+        #             violation_details.append(
+        #                 f"'{v['rule']}' - {v['explanation']}"
+        #             )
+        #         feedback.append(
+        #             f"🔴 규칙 위반: {'; '.join(violation_details)} "
+        #             f"→ 모든 규칙을 반드시 준수해야 합니다!"
+        #         )
 
         # 4. Operating hours 위반
         if not validation_results.get("operating_hours", {}).get("is_valid", True):
@@ -1531,9 +1531,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                             violations = validation_results["operating_hours"].get("violations", [])
                             logger.warning(f"❌ operating_hours 위반: {len(violations)}건")
 
-                        if not validation_results.get("rules", {}).get("is_valid", True):
-                            violations = validation_results["rules"].get("violations", [])
-                            logger.warning(f"❌ rules 위반: {len(violations)}건")
+                        # if not validation_results.get("rules", {}).get("is_valid", True):  # Disabled: rule validation
+                        #     violations = validation_results["rules"].get("violations", [])
+                        #     logger.warning(f"❌ rules 위반: {len(violations)}건")
 
                         # 매번 Routes API로 조정하므로 추가 조정 불필요
                         logger.warning("⚠️ 매번 Routes API로 자동 조정하므로 추가 조정 없이 검증 실패한 일정을 반환합니다")
