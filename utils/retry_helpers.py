@@ -2,8 +2,10 @@
 Retry utilities for Gemini API calls with exponential backoff strategy.
 
 PR#14: Exponential backoff 재시도 전략 구현
+PR#17: InvalidGeminiResponseError 및 JSONDecodeError 재시도 추가
 """
 import logging
+import json
 from typing import Type, Tuple
 from tenacity import (
     retry,
@@ -19,12 +21,24 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+# PR#17: Custom exception for invalid Gemini responses
+class InvalidGeminiResponseError(Exception):
+    """Gemini API returned invalid or malformed response."""
+    pass
+
+
 # Define retryable exception types for network errors
 NETWORK_EXCEPTIONS: Tuple[Type[Exception], ...] = (
     httpx.TimeoutException,
     httpx.ConnectError,
     httpx.ReadError,
     httpx.WriteError,
+)
+
+# PR#17: Define retryable exception types for Gemini response errors
+GEMINI_RESPONSE_EXCEPTIONS: Tuple[Type[Exception], ...] = (
+    InvalidGeminiResponseError,
+    json.JSONDecodeError,
 )
 
 
@@ -36,6 +50,8 @@ def is_retryable_error(retry_state: RetryCallState) -> bool:
     - 5xx errors (server errors)
     - 429 (rate limiting)
     - Network errors (timeout, connection, etc.)
+    - PR#17: Invalid Gemini responses (InvalidGeminiResponseError)
+    - PR#17: JSON parsing errors (JSONDecodeError)
 
     Non-retryable:
     - 4xx errors (client errors, except 429)
@@ -49,6 +65,11 @@ def is_retryable_error(retry_state: RetryCallState) -> bool:
 
     # Check for network errors
     if isinstance(exception, NETWORK_EXCEPTIONS):
+        return True
+
+    # PR#17: Check for Gemini response errors (invalid response or JSON parse errors)
+    if isinstance(exception, GEMINI_RESPONSE_EXCEPTIONS):
+        logger.warning(f"Retrying due to Gemini response error: {type(exception).__name__}")
         return True
 
     # Check for HTTP status errors

@@ -19,7 +19,8 @@ from services.validators import (
     adjust_schedule_with_new_travel_times
 )
 # PR#15: Retry helper import 추가
-from utils.retry_helpers import gemini_generate_retry
+# PR#17: InvalidGeminiResponseError import 추가
+from utils.retry_helpers import gemini_generate_retry, InvalidGeminiResponseError
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,8 @@ class ItineraryGeneratorService2:
     def __init__(self):
         """Gemini 클라이언트 초기화"""
         self.client = genai.Client(api_key=settings.google_api_key)
-        self.model_name = "gemini-2.5-pro"
-        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-pro and Google Maps grounding")
+        self.model_name = "gemini-2.5-flash"
+        logger.info("ItineraryGeneratorService2 initialized with gemini-2.5-flash and Google Maps grounding")
 
     @gemini_generate_retry
     def _call_gemini_api(self, prompt: str):
@@ -79,7 +80,7 @@ class ItineraryGeneratorService2:
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.7,
+                    temperature=0.3,  # PR#17: Lowered from 0.7 to 0.3 for more stable JSON output
                     # Note: response_mime_type="application/json" is not supported with Google Maps tool
                     tools=[
                         types.Tool(google_search={})  # ✅ Google Search Grounding Tool (includes Maps)
@@ -138,6 +139,68 @@ class ItineraryGeneratorService2:
                 }
             )
             raise
+
+    def _validate_gemini_response(self, response_text: str) -> None:
+        """
+        PR#17: Validate Gemini response before JSON parsing.
+
+        Detects abnormal responses that should trigger a retry:
+        - Too short responses (< 50 characters)
+        - Responses with no JSON structure (no braces)
+        - Abnormal repeating patterns (e.g., "n6r5o5n6r5o5...")
+
+        Args:
+            response_text: Raw response text from Gemini
+
+        Raises:
+            InvalidGeminiResponseError: If response appears invalid
+        """
+        # 1. Check minimum length
+        if len(response_text) < 50:
+            logger.error(f"Response too short: {len(response_text)} characters")
+            raise InvalidGeminiResponseError(
+                f"Response too short ({len(response_text)} chars): {response_text[:100]}"
+            )
+
+        # 2. Check for JSON structure (must contain at least one '{')
+        if '{' not in response_text:
+            logger.error("Response contains no JSON structure (no opening brace)")
+            raise InvalidGeminiResponseError(
+                f"No JSON structure found in response: {response_text[:200]}"
+            )
+
+        # 3. Detect abnormal repeating patterns
+        # Check if response has too many repeated small substrings (like "n6r5o5")
+        # Sample first 500 chars and check for high repetition
+        sample = response_text[:500]
+
+        # Count unique 6-character substrings vs total
+        if len(sample) >= 100:
+            substrings = [sample[i:i+6] for i in range(len(sample) - 5)]
+            unique_ratio = len(set(substrings)) / len(substrings)
+
+            # If less than 20% unique, it's likely a repeating pattern
+            if unique_ratio < 0.2:
+                logger.error(f"Abnormal repeating pattern detected (unique ratio: {unique_ratio:.2%})")
+                logger.error(f"Sample: {sample[:200]}")
+                raise InvalidGeminiResponseError(
+                    f"Repeating pattern detected in response (unique ratio: {unique_ratio:.2%})"
+                )
+
+        # 4. Check for reasonable character distribution
+        # Valid JSON should have a mix of alphanumeric and special characters
+        alphanumeric = sum(c.isalnum() for c in sample)
+        if alphanumeric > 0:
+            alpha_ratio = alphanumeric / len(sample)
+            # JSON typically has 40-80% alphanumeric characters
+            # If it's > 95%, it might be gibberish like "n6r5o5..."
+            if alpha_ratio > 0.95:
+                logger.error(f"Abnormal character distribution (alphanumeric: {alpha_ratio:.2%})")
+                raise InvalidGeminiResponseError(
+                    f"Abnormal character distribution in response (alphanumeric: {alpha_ratio:.2%})"
+                )
+
+        logger.debug("Response validation passed")
 
     def _create_prompt_v2(
         self,
@@ -1388,6 +1451,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                 response_text = response.text
                 logger.info(f"Received response: {len(response_text)} characters")
                 logger.debug(f"Response preview: {response_text[:200]}...")
+
+                # PR#17: 응답 사전 검증 (비정상 응답 감지)
+                self._validate_gemini_response(response_text)
 
                 # JSON 정리 로직 (더 강력한 처리)
                 original_text = response_text
