@@ -80,7 +80,7 @@ class ItineraryGeneratorService2:
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.3,  # PR#17: Lowered from 0.7 to 0.3 for more stable JSON output
+                    temperature=0.7,  # 0.7 해보고 안되면 0.3으로 변경해볼 것
                     # Note: response_mime_type="application/json" is not supported with Google Maps tool
                     tools=[
                         types.Tool(google_search={})  # ✅ Google Search Grounding Tool (includes Maps)
