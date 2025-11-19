@@ -547,7 +547,7 @@ def validate_rules_with_gemini(
                                        and doesn't have too many activities
 
     Note:
-        - Uses Gemini 2.5-pro for rule validation
+        - Uses Gemini 2.5-flash for rule validation
         - Requires valid google_api_key in settings
         - Temperature is set to 0.3 for consistent validation
     """
