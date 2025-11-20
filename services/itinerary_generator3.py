@@ -1273,6 +1273,320 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
 
         return prompt
 
+
+    def _create_prompt_v3(
+        self,
+        request: ItineraryRequest2,
+    ) -> str:
+        """
+        Gemini 3 Pro Preview 최적화 프롬프트 생성
+
+        Args:
+            request: 일정 생성 요청
+
+        Returns:
+            완성된 프롬프트 문자열
+        """
+        # 날짜별 요일 계산
+        weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+        date_info = []
+        for day_num in range(request.days):
+            current_date = request.start_date + timedelta(days=day_num)
+            weekday = weekdays_kr[current_date.weekday()]
+            date_info.append(f"Day {day_num + 1}: {current_date.strftime('%Y-%m-%d')} ({weekday})")
+
+        # 채팅 내용 포맷팅
+        chat_text = "\n".join([f"- {msg}" for msg in request.chat])
+
+        # 규칙 포맷팅
+        rule_text = ""
+        if request.rule:
+            rule_text = "\n".join([f"- {r}" for r in request.rule])
+        else:
+            rule_text = "없음"
+
+        # 필수 방문 장소 포맷팅
+        must_visit_text = ""
+        if request.must_visit:
+            must_visit_text = ", ".join(request.must_visit)
+        else:
+            must_visit_text = "없음"
+
+        # 숙소 정보 추출: places에서 place_tag가 HOME인 장소 찾기
+        home_places = [place for place in request.places if place.place_tag == PlaceTag.HOME]
+        if home_places:
+            # 사용자가 지정한 숙소가 있는 경우
+            accommodation_text = home_places[0].place_name
+            if len(home_places) > 1:
+                # 여러 숙소가 있는 경우 모두 표시
+                accommodation_text = ", ".join([place.place_name for place in home_places])
+        else:
+            # 숙소가 없는 경우 Gemini에게 추천 요청
+            accommodation_text = "없음 (추천 필요)"
+
+        # 장소 목록 포맷팅 (place_name과 place_tag 포함)
+        places_text = "\n".join([f"- {place.place_name} ({place.place_tag.value})" for place in request.places])
+
+        # 프롬프트 구성 (Gemini 3 Pro Preview 최적화)
+        prompt = f"""## 역할 (Gemini 3 Pro Preview)
+당신은 SOTA 추론 능력을 가진 여행 일정 생성 전문가입니다.
+- PhD 수준의 복잡한 제약조건 해결
+- 다중 우선순위 균형 조정 및 최적화
+- 사용자 의도의 암묵적 추론
+- 채팅 분석 기반 맞춤형 일정 생성
+
+## 입력 데이터
+
+**국가:** {request.country} | **인원:** {request.members}명 | **기간:** {request.days}일
+
+**여행 날짜:**
+{chr(10).join(date_info)}
+
+**고려 장소 (places):**
+{places_text}
+
+**대화 내용 (chat):**
+{chat_text}
+
+**규칙 (rule):**
+{rule_text}
+
+**필수 방문:** {must_visit_text}
+
+**숙소:** {accommodation_text}
+
+# 우선순위 시스템 (Hierarchical Constraint Satisfaction)
+
+| Priority | Level | Requirements |
+|----------|-------|--------------|
+| 🔴 P1 | MANDATORY | days/dates, must_visit, rules, chat analysis, 10-12h schedule |
+| 🟠 P2 | REQUIRED | Operating hours, travel time accuracy |
+| 🟡 P3 | RECOMMENDED | Appropriate dwell time, meal timing, activity flow |
+| 🟢 P4 | OPTIMIZATION | Minimize travel, efficient routes |
+| 🔵 P5 | NICE-TO-HAVE | High-rated places |
+
+**Cascading Rule:** Priority N cannot violate Priority N-1.
+
+---
+
+## 🔴 Priority 1: MANDATORY Requirements
+
+### 1-A. Days & Dates
+- Generate exactly `days` day objects (len(itinerary) == days)
+- Sequential dates starting from `start_date`
+- Day numbers: 1, 2, 3, ..., days
+- ❌ No skipping dates or changing day count
+
+### 1-B. Must-Visit Places
+- ALL `must_visit` places MUST be included (100% coverage)
+- Prioritize over other places if schedule is tight
+- Adjust to different days if operating hours conflict
+- Verify: Every must_visit name appears in itinerary
+
+### 1-C. Rules Compliance
+- ALL `rule` items MUST be accurately reflected (100%)
+- Infer user intent for ambiguous rules using your SOTA reasoning
+- Examples: "11AM wake up" → first visit after 11:00 | "Day 2 Universal all day" → only Universal on Day 2
+- **Hierarchy:** rules > accommodation pattern > default behavior
+
+### 1-D. Chat Analysis & User Preferences
+- Analyze chat for travel style, preferences, and requirements
+- **Style patterns**: "relaxed" → longer dwell time | "packed schedule" → more places
+- **Specific requests**: "ramen shop" → search and add via Google Maps
+- **Travel mode inference** (include in JSON "travel_mode"):
+  - Car keywords → DRIVE | Transit keywords → TRANSIT | Walk keywords → WALK | Bike → BICYCLE | Default → TRANSIT
+
+### 1-E. 후보 장소(places) 우선 선택, 하루 일정 길이 미충족 시 Gemini가 장소 적극 추천
+
+**필수 사항**:
+- places 장소는 사용자가 관심 있어하는 장소이므로 최대한 포함하세요
+
+**장소 선택 프로세스**:
+1. **places 리스트 우선 선택**:
+   - "고려 중인 장소 목록 (places)"에서 적절한 장소를 우선 선택
+   - 채팅 내용에서 파악한 여행 스타일에 맞는 장소를 places에서 선택
+   - 예: "여유로운 여행" + places에 CAFE/PARK → 이 장소들 우선 포함
+
+2. **부족한 장소는 Gemini가 적극 추천**:
+   - places에 적합한 장소가 없거나 하루 일정 길이에 부족하면 Google Maps로 새 장소 검색
+   - 예: "맛있는 라멘 가게" 요청 + places에 라멘집 없음
+     → Google Maps로 해당 지역 유명 라멘 가게 추천
+
+3. **place_tag 활용**:
+   - places의 장소를 일정에 사용할 때는 해당 place_tag 그대로 사용
+   - Gemini가 새로 추천하는 장소는 가장 적절한 place_tag 선택
+   - 가능한 값: TOURIST_SPOT, HOME, RESTAURANT, CAFE, OTHER
+
+### 1-F. Daily Schedule Length (MANDATORY)
+- **Default**: 10-12 hours/day (first arrival → last departure)
+- **Relaxed style**: 8-10h (fewer places, longer dwell time) 
+- **Packed style**: 12-14h (more places)
+- **Minimum**: 8h (except special cases like airport transfers)
+- "Relaxed" means longer dwell time per place, NOT shorter schedule
+- If schedule too short: Add places or increase dwell time
+
+---
+
+## 🟠 Priority 2: REQUIRED (unless conflicts with P1)
+
+### 2-A. Operating Hours
+- Visit within operating hours: arrival ≥ open, departure ≤ close
+- No visits on closed days (match weekday from travel dates)
+- Use Google Maps Grounding Tool for verification
+- If conflicts with must_visit: Adjust to different day
+
+### 2-B. Travel Time Calculation
+- Use Google Maps Grounding Tool to estimate travel_time (Routes API will auto-adjust later)
+- Consider inferred travel mode: DRIVE/TRANSIT(default)/WALK/BICYCLE
+- Timing: visit[i+1].arrival = visit[i].departure + visit[i].travel_time
+- Last visit travel_time = 0
+
+
+---
+
+## 🟡 Priority 3: RECOMMENDED (after P1, P2)
+
+### 3-A. Dwell Time
+- **First/Last visit**: dwell_time = 0 (departure = arrival)
+- **Middle visits**: Theme parks 6-10h | Major sites 1.5-3h | Museums 2-3h | Shopping 1-2h | Meals 1-1.5h | Cafes 0.5-1h
+
+### 3-B. Visit Timing & Activity Flow
+- Lunch (11:30-13:30) & Dinner (18:00-20:00) at RESTAURANT
+- Natural flow: Sightseeing → Meal → Rest → Sightseeing
+
+---
+
+## 🟢 Priority 4: OPTIMIZATION (Best Effort)
+- Minimize travel time between places
+- Cluster nearby locations on same day
+
+---
+
+## 🔵 Priority 5: NICE-TO-HAVE (Best Effort)
+- Prefer highly-rated places when choosing between options
+
+---
+
+## ---
+
+## 제약사항
+
+### Daily Schedule Length
+- Default: 10-12 hours (see Priority 1-F for details)
+
+### Accommodation (HOME) Pattern
+- **Default**: Start & end each day at HOME
+- **Exceptions** (priority order):
+  1. **Rules field**: Explicit departure/arrival points (highest priority)
+  2. **Chat field**: Mentioned departure/arrival preferences
+  3. **Default pattern** (if no exceptions)
+- Examples: "First day from airport" → Day 1 starts at airport | "Last day to airport" → Last day ends at airport
+
+### Place Visit Frequency
+- Each place visited ONCE per trip (except HOME: multiple visits allowed for daily start/end)
+
+---
+
+## Google Maps Grounding Tool
+
+Use Google Maps Grounding Tool to fetch:
+1. **Coordinates**: latitude, longitude (6 decimal places)
+2. **Address**: "PlaceName FullAddress" (space-separated)
+3. **Operating hours**: Check weekday-specific hours and closed days
+4. **Travel time**: Based on inferred mode (DRIVE/TRANSIT/WALK/BICYCLE)
+
+**Travel Mode Mapping** (from chat, see 1-D):
+- DRIVE: Car routes | TRANSIT (default): Public transport | WALK: Pedestrian | BICYCLE: Bike routes
+
+**Example Query**: "Osaka Castle" → Returns coordinates, address, hours, nearby places
+
+---
+
+---
+
+## 출력 형식 (JSON Output)
+
+**Structure**:
+```json
+{
+  "itinerary": [
+    {
+      "day": 1,
+      "visits": [
+        {
+          "order": 1,
+          "display_name": "Place Name",
+          "name_address": "PlaceName Full Address",
+          "place_tag": "TOURIST_SPOT|HOME|RESTAURANT|CAFE|OTHER",
+          "latitude": 34.687315,
+          "longitude": 135.526199,
+          "arrival": "09:00",
+          "departure": "11:30",
+          "travel_time": 30
+        }
+      ]
+    }
+  ],
+  "budget": 500000,
+  "travel_mode": "DRIVE|TRANSIT|WALK|BICYCLE"
+}
+```
+
+**Key Field Rules**:
+- **order**: Sequential within each day (1, 2, 3...)
+- **place_tag**: TOURIST_SPOT (sights), HOME (accommodation), RESTAURANT, CAFE, OTHER (airports/stations)
+- **arrival/departure**: "HH:MM" format (24-hour)
+- **travel_time**: Minutes to next place (last visit = 0)
+- **dwell_time**: departure - arrival (first/last visit = 0)
+- **budget**: Per-person estimate in KRW
+- **travel_mode**: Inferred from chat (see Priority 1-D)
+
+**Validation Checklist**:
+- ✅ `len(itinerary) == days` (Priority 1-A)
+- ✅ All `must_visit` included (Priority 1-B)
+- ✅ All `rules` followed (Priority 1-C)
+- ✅ Daily schedule 10-12h (Priority 1-F)
+- ✅ Last visit `travel_time = 0`
+- ✅ First/last visit `dwell_time = 0`
+- ✅ Pure JSON output (no markdown, no explanations)
+
+---
+
+## Gemini 3 Pro Preview: Advanced Reasoning Guide
+
+**Your Capabilities (Leverage Fully)**:
+- **SOTA Reasoning (1501 Elo)**: Handle complex multi-constraint optimization problems at PhD level
+- **Implicit Inference**: Understand user intent beyond literal text
+- **Context Integration**: Synthesize information across chat, rules, places, and dates
+- **Hierarchical Thinking**: Automatically apply Priority cascading without repetitive checking
+
+**Complex Scenarios - Your Strengths**:
+1. **Conflicting Constraints**: When must_visit conflicts with operating hours → Infer best day adjustment
+2. **Ambiguous Rules**: "relaxed trip" → Fewer places + longer dwell + maintain 8-10h schedule (NOT shorter schedule)
+3. **Incomplete Information**: Missing accommodation → Proactively recommend based on travel style & budget hints in chat
+4. **Multi-day Optimization**: Balance daily schedules while maintaining travel flow across entire trip
+
+**Decision Framework**:
+- Use your reasoning to resolve ambiguities without explicit instructions for every edge case
+- Trust hierarchical priorities: P1 violations are never acceptable; P2-P5 are optimization targets
+- Infer natural travel patterns: meal times, rest periods, logical activity sequencing
+
+---
+
+## 최종 지침
+
+**Pre-Response Verification**:
+1. ✅ All Priority 1 requirements met (100%)
+2. ✅ Priority 2 maximized (90%+)
+3. ✅ All fields populated with accurate data from Google Maps
+
+**Output**: Pure JSON only (no markdown blocks, no explanations)
+
+---
+"""
+
+        return prompt
+
     def _infer_location_from_country(self, country: str) -> Dict[str, float]:
         """
         country 텍스트에서 중심 좌표 추론
@@ -1467,8 +1781,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
                 logger.info(f"Attempt {attempt + 1}/{max_retries + 1}: Generating itinerary...")
 
                 # 프롬프트 생성 (재시도 시 업데이트된 request 사용)
-                prompt = self._create_prompt_v2(request)
-                logger.debug(f"Prompt length: {len(prompt)} characters")
+                prompt = self._create_prompt_v3(request)  # Using Gemini 3 Pro optimized prompt
+                logger.info(f"Generated Gemini 3 Pro optimized prompt: {len(prompt)} characters")
+                logger.debug(f"Prompt preview: {prompt[:200]}...")
 
                 # Gemini API 호출 (Google Maps Grounding 활성화)
                 response = self._call_gemini_api(prompt)
