@@ -767,8 +767,8 @@ Result:
           "display_name": "오사카 성",
           "name_address": "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본",
           "place_tag": "TOURIST_SPOT",
-          "latitude": 34.687315,
-          "longitude": 135.526199,
+          "latitude": null,
+          "longitude": null,
           "arrival": "09:00",
           "departure": "11:30",
           "travel_time": 30
@@ -778,8 +778,8 @@ Result:
           "display_name": "도톤보리",
           "name_address": "도톤보리 Dotonbori, Chuo Ward, Osaka, 542-0071 일본",
           "place_tag": "TOURIST_SPOT",
-          "latitude": 34.668736,
-          "longitude": 135.501297,
+          "latitude": null,
+          "longitude": null,
           "arrival": "12:00",
           "departure": "14:00",
           "travel_time": 0
@@ -833,10 +833,11 @@ Result:
      - **CAFE**: 카페, 디저트 가게, 베이커리 등
      - **OTHER**: 위 분류에 맞지 않는 경우 (공항, 역 등)
 
-5. **latitude, longitude** (소수):
-   - 소수점 형식의 정확한 좌표 (소수점 6자리까지)
-   - 예: latitude: 34.687315, longitude: 135.526199
-   - Google Maps에서 조회한 정확한 좌표 사용
+5. **latitude, longitude** (null 고정):
+   - **항상 null로 설정하세요**
+   - 백엔드에서 name_address를 기반으로 정확한 좌표를 자동 조회합니다
+   - name_address의 정확성이 매우 중요합니다 (좌표 조회의 기준이 됨)
+   - 예: latitude: null, longitude: null
 
 6. **arrival** (문자열) - **필수 필드**:
    - 해당 장소에 도착하는 시간
@@ -915,8 +916,8 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
           "display_name": "크로스 호텔 오사카",
           "name_address": "크로스 호텔 오사카 2-5-15 Shinsaibashi-suji, Chuo Ward, Osaka, 542-0085 일본",
           "place_tag": "HOME",
-          "latitude": 34.672042,
-          "longitude": 135.502014,
+          "latitude": null,
+          "longitude": null,
           "arrival": "09:00",
           "departure": "09:30",
           "travel_time": 20
@@ -926,8 +927,8 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
           "display_name": "오사카 성",
           "name_address": "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본",
           "place_tag": "TOURIST_SPOT",
-          "latitude": 34.687315,
-          "longitude": 135.526199,
+          "latitude": null,
+          "longitude": null,
           "arrival": "09:50",
           "departure": "12:20",
           "travel_time": 30
@@ -937,8 +938,8 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
           "display_name": "이치란 라멘 도톤보리점",
           "name_address": "이치란 라멘 도톤보리점 1-4-16 Dotonbori, Chuo Ward, Osaka, 542-0071 일본",
           "place_tag": "RESTAURANT",
-          "latitude": 34.668975,
-          "longitude": 135.501123,
+          "latitude": null,
+          "longitude": null,
           "arrival": "12:50",
           "departure": "14:00",
           "travel_time": 15
@@ -948,8 +949,8 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
           "display_name": "크로스 호텔 오사카",
           "name_address": "크로스 호텔 오사카 2-5-15 Shinsaibashi-suji, Chuo Ward, Osaka, 542-0085 일본",
           "place_tag": "HOME",
-          "latitude": 34.672042,
-          "longitude": 135.502014,
+          "latitude": null,
+          "longitude": null,
           "arrival": "14:15",
           "departure": "14:15",
           "travel_time": 0

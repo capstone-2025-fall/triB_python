@@ -81,13 +81,13 @@ class Visit2(BaseModel):
         ...,
         description="장소 유형 태그 (TOURIST_SPOT, HOME, RESTAURANT, CAFE, OTHER)"
     )
-    latitude: float = Field(
-        ...,
-        description="위도"
+    latitude: Optional[float] = Field(
+        default=None,
+        description="위도 (Gemini가 생성하지 않으면 None, 백엔드에서 Places API로 채움)"
     )
-    longitude: float = Field(
-        ...,
-        description="경도"
+    longitude: Optional[float] = Field(
+        default=None,
+        description="경도 (Gemini가 생성하지 않으면 None, 백엔드에서 Places API로 채움)"
     )
     arrival: str = Field(
         ...,

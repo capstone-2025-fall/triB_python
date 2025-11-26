@@ -14,6 +14,7 @@ import json
 from google import genai
 from google.genai import types
 import logging
+import copy
 from utils.retry_helpers import gemini_validate_retry
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,195 @@ def validate_days_count(
         "expected": expected_days,
         "difference": actual_days - expected_days
     }
+
+
+def geocode_place_by_name_address(
+    name_address: str,
+    existing_lat: float = None,
+    existing_lng: float = None,
+    search_radius: float = 1000.0
+) -> Dict[str, float]:
+    """
+    Places API Text Search로 name_address를 정확한 좌표로 변환
+
+    Args:
+        name_address: 장소명 + 주소 (예: "오사카 성 1-1 Osakajo, Chuo Ward, Osaka, 540-0002 일본")
+        existing_lat: 기존 위도 (locationBias로 활용, 선택사항)
+        existing_lng: 기존 경도 (locationBias로 활용, 선택사항)
+        search_radius: 검색 반경 (미터, 기본값 1000.0)
+
+    Returns:
+        Dict[str, float]: {"latitude": float, "longitude": float}
+                          또는 {"latitude": None, "longitude": None} (실패 시)
+
+    Note:
+        - Places API (New) Text Search 사용
+        - 모든 에러는 로그만 기록, 예외 발생 안 함
+        - existing 좌표가 있으면 locationBias로 활용하여 정확도 향상
+    """
+    # 입력 검증
+    if not name_address or not name_address.strip():
+        logger.warning("Empty name_address provided to geocode_place_by_name_address")
+        return {"latitude": None, "longitude": None}
+
+    # Places API (New) endpoint
+    places_api_url = "https://places.googleapis.com/v1/places:searchText"
+
+    # Request body 구성
+    request_body = {
+        "textQuery": name_address.strip()
+    }
+
+    # existing 좌표가 있으면 locationBias 추가 (정확도 향상)
+    if existing_lat is not None and existing_lng is not None:
+        request_body["locationBias"] = {
+            "circle": {
+                "center": {
+                    "latitude": existing_lat,
+                    "longitude": existing_lng
+                },
+                "radius": search_radius
+            }
+        }
+
+    # Headers
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": settings.google_maps_api_key,
+        "X-Goog-FieldMask": "places.location,places.displayName"
+    }
+
+    try:
+        with httpx.Client() as client:
+            response = client.post(
+                places_api_url,
+                json=request_body,
+                headers=headers,
+                timeout=10.0
+            )
+
+        # 성공 응답 처리
+        if response.status_code == 200:
+            data = response.json()
+
+            if "places" in data and len(data["places"]) > 0:
+                place_data = data["places"][0]
+                location = place_data.get("location", {})
+
+                latitude = location.get("latitude")
+                longitude = location.get("longitude")
+
+                if latitude is not None and longitude is not None:
+                    logger.info(f"✅ Geocoded '{name_address[:50]}...' → ({latitude:.6f}, {longitude:.6f})")
+                    return {
+                        "latitude": latitude,
+                        "longitude": longitude
+                    }
+                else:
+                    logger.warning(f"⚠️ Place found but no coordinates: '{name_address[:50]}...'")
+                    return {"latitude": None, "longitude": None}
+            else:
+                logger.warning(f"⚠️ No places found for: '{name_address[:50]}...'")
+                return {"latitude": None, "longitude": None}
+        else:
+            # HTTP 에러
+            logger.warning(
+                f"⚠️ Places API error (HTTP {response.status_code}): '{name_address[:50]}...'"
+            )
+            return {"latitude": None, "longitude": None}
+
+    except httpx.TimeoutException:
+        logger.warning(f"⚠️ Places API timeout for: '{name_address[:50]}...'")
+        return {"latitude": None, "longitude": None}
+    except Exception as e:
+        logger.warning(
+            f"⚠️ Unexpected error geocoding '{name_address[:50]}...': {type(e).__name__} - {str(e)[:100]}"
+        )
+        return {"latitude": None, "longitude": None}
+
+
+def enrich_itinerary_with_accurate_coordinates(
+    itinerary: ItineraryResponse2,
+    use_existing_as_bias: bool = True,
+    fallback_to_existing: bool = True
+) -> ItineraryResponse2:
+    """
+    전체 itinerary의 모든 visit 좌표를 Places API로 갱신
+
+    이 함수는 itinerary의 각 visit에 대해 Places API Text Search를 호출하여
+    name_address를 기반으로 정확한 좌표를 조회합니다.
+
+    Args:
+        itinerary: 좌표를 갱신할 itinerary 객체
+        use_existing_as_bias: True면 기존 좌표를 locationBias로 활용 (정확도 향상)
+        fallback_to_existing: True면 API 실패 시 기존 좌표 유지, False면 None으로 설정
+
+    Returns:
+        ItineraryResponse2: 좌표가 갱신된 새 itinerary 객체 (deep copy)
+
+    Note:
+        - Deep copy로 원본을 보호합니다
+        - 모든 visit에 대해 순차적으로 Places API 호출
+        - 성공/실패 통계를 로그로 출력
+    """
+    # Deep copy로 원본 보호
+    updated_itinerary = copy.deepcopy(itinerary)
+
+    total_visits = 0
+    successful_updates = 0
+    failed_updates = 0
+
+    logger.info("Starting coordinate enrichment with Places API...")
+
+    # 모든 day → visit 순회
+    for day in updated_itinerary.itinerary:
+        for visit in day.visits:
+            total_visits += 1
+
+            # geocode_place_by_name_address() 호출
+            existing_lat = visit.latitude if use_existing_as_bias else None
+            existing_lng = visit.longitude if use_existing_as_bias else None
+
+            coords = geocode_place_by_name_address(
+                name_address=visit.name_address,
+                existing_lat=existing_lat,
+                existing_lng=existing_lng
+            )
+
+            # 좌표 업데이트
+            if coords["latitude"] is not None and coords["longitude"] is not None:
+                # 성공: 새 좌표로 업데이트
+                visit.latitude = coords["latitude"]
+                visit.longitude = coords["longitude"]
+                successful_updates += 1
+            else:
+                # 실패: fallback 처리
+                if fallback_to_existing:
+                    # 기존 좌표 유지 (이미 visit에 있음)
+                    logger.debug(f"Keeping existing coordinates for: {visit.display_name}")
+                else:
+                    # None으로 설정
+                    visit.latitude = None
+                    visit.longitude = None
+                failed_updates += 1
+
+    # 통계 로깅
+    logger.info(
+        f"Coordinate enrichment complete: {total_visits} total visits, "
+        f"{successful_updates} successfully updated, {failed_updates} failed"
+    )
+
+    if failed_updates > 0:
+        if fallback_to_existing:
+            logger.warning(
+                f"⚠️ {failed_updates} visits kept existing coordinates due to Places API failure"
+            )
+        else:
+            logger.warning(
+                f"⚠️ {failed_updates} visits have no coordinates due to Places API failure"
+            )
+
+    return updated_itinerary
 
 
 def fetch_actual_travel_times(

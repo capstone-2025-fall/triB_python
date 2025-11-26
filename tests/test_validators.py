@@ -15,8 +15,11 @@ from services.validators import (
     infer_travel_mode,
     is_first_or_last_visit,
     update_travel_times_from_routes,
-    adjust_schedule_with_new_travel_times
+    adjust_schedule_with_new_travel_times,
+    geocode_place_by_name_address,  # PR#1: 추가
+    enrich_itinerary_with_accurate_coordinates  # PR#1: 추가
 )
+from unittest.mock import patch, MagicMock
 
 
 # Test Fixtures
@@ -1499,3 +1502,251 @@ def test_infer_travel_mode_case_insensitive():
     # Mixed case should work
     assert infer_travel_mode(["렌터카"]) == "DRIVE"
     assert infer_travel_mode(["RENTAL CAR", "렌터카"]) == "DRIVE"
+
+
+# ============================================================================
+# PR#1: Tests for geocode_place_by_name_address and enrich_itinerary
+# ============================================================================
+
+def test_geocode_place_by_name_address_success():
+    """
+    Test geocode_place_by_name_address with real Places API call.
+
+    Note: This test uses real Google Places API calls.
+    It may fail if API key is invalid or API is unavailable.
+    """
+    name_address = "Gyeongbokgung Palace 161 Sajik-ro, Jongno-gu, Seoul"
+    result = geocode_place_by_name_address(name_address)
+
+    # Should return valid coordinates
+    assert result["latitude"] is not None
+    assert result["longitude"] is not None
+
+    # Coordinates should be in valid range
+    assert -90 <= result["latitude"] <= 90
+    assert -180 <= result["longitude"] <= 180
+
+    # Should be roughly in Seoul area
+    assert 37.5 <= result["latitude"] <= 37.7
+    assert 126.9 <= result["longitude"] <= 127.1
+
+
+def test_geocode_place_by_name_address_with_bias():
+    """Test geocode_place_by_name_address with existing coordinates as bias."""
+    name_address = "Gyeongbokgung Palace 161 Sajik-ro, Jongno-gu, Seoul"
+    # Provide existing coordinates as hint (slightly off from actual)
+    existing_lat = 37.58
+    existing_lng = 126.98
+
+    result = geocode_place_by_name_address(
+        name_address,
+        existing_lat=existing_lat,
+        existing_lng=existing_lng
+    )
+
+    # Should still return valid coordinates
+    assert result["latitude"] is not None
+    assert result["longitude"] is not None
+    assert -90 <= result["latitude"] <= 90
+    assert -180 <= result["longitude"] <= 180
+
+
+@patch('services.validators.httpx.Client')
+def test_geocode_place_by_name_address_not_found(mock_client):
+    """Test geocode_place_by_name_address when no places are found."""
+    # Mock response with empty places list
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"places": []}
+
+    mock_client_instance = MagicMock()
+    mock_client_instance.__enter__.return_value = mock_client_instance
+    mock_client_instance.__exit__.return_value = None
+    mock_client_instance.post.return_value = mock_response
+    mock_client.return_value = mock_client_instance
+
+    result = geocode_place_by_name_address("Nonexistent Place XYZ123")
+
+    # Should return None coordinates
+    assert result["latitude"] is None
+    assert result["longitude"] is None
+
+
+@patch('services.validators.httpx.Client')
+def test_geocode_place_by_name_address_api_error(mock_client):
+    """Test geocode_place_by_name_address when API returns error."""
+    # Mock 400 error response
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+
+    mock_client_instance = MagicMock()
+    mock_client_instance.__enter__.return_value = mock_client_instance
+    mock_client_instance.__exit__.return_value = None
+    mock_client_instance.post.return_value = mock_response
+    mock_client.return_value = mock_client_instance
+
+    result = geocode_place_by_name_address("Test Place")
+
+    # Should return None coordinates (error handled gracefully)
+    assert result["latitude"] is None
+    assert result["longitude"] is None
+
+
+@patch('services.validators.geocode_place_by_name_address')
+def test_enrich_itinerary_success(mock_geocode):
+    """Test enrich_itinerary_with_accurate_coordinates with successful geocoding."""
+    # Mock geocode function to return predictable coordinates
+    def mock_geocode_fn(name_address, existing_lat=None, existing_lng=None, search_radius=1000.0):
+        # Return different coordinates based on place name
+        if "Museum" in name_address:
+            return {"latitude": 37.5, "longitude": 127.0}
+        elif "Restaurant" in name_address:
+            return {"latitude": 37.6, "longitude": 127.1}
+        elif "Park" in name_address:
+            return {"latitude": 37.7, "longitude": 127.2}
+        return {"latitude": None, "longitude": None}
+
+    mock_geocode.side_effect = mock_geocode_fn
+
+    # Create sample itinerary
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Museum",
+                        name_address="Museum Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=0.0,  # Original (wrong) coordinates
+                        longitude=0.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=30
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Restaurant",
+                        name_address="Restaurant Address",
+                        place_tag=PlaceTag.RESTAURANT,
+                        latitude=0.0,
+                        longitude=0.0,
+                        arrival="11:30",
+                        departure="13:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000,
+        travel_mode="TRANSIT"
+    )
+
+    # Enrich coordinates
+    enriched = enrich_itinerary_with_accurate_coordinates(itinerary)
+
+    # Check that coordinates were updated
+    assert enriched.itinerary[0].visits[0].latitude == 37.5
+    assert enriched.itinerary[0].visits[0].longitude == 127.0
+    assert enriched.itinerary[0].visits[1].latitude == 37.6
+    assert enriched.itinerary[0].visits[1].longitude == 127.1
+
+    # Check that original itinerary was not modified (deep copy)
+    assert itinerary.itinerary[0].visits[0].latitude == 0.0
+    assert itinerary.itinerary[0].visits[0].longitude == 0.0
+
+
+@patch('services.validators.geocode_place_by_name_address')
+def test_enrich_itinerary_partial_failure(mock_geocode):
+    """Test enrich_itinerary with some places failing to geocode."""
+    # Mock geocode function with partial failures
+    def mock_geocode_fn(name_address, existing_lat=None, existing_lng=None, search_radius=1000.0):
+        if "Museum" in name_address:
+            return {"latitude": 37.5, "longitude": 127.0}
+        else:
+            return {"latitude": None, "longitude": None}  # Failed
+
+    mock_geocode.side_effect = mock_geocode_fn
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Museum",
+                        name_address="Museum Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=10.0,  # Existing coordinates
+                        longitude=20.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=30
+                    ),
+                    Visit2(
+                        order=2,
+                        display_name="Unknown Place",
+                        name_address="Unknown Address",
+                        place_tag=PlaceTag.OTHER,
+                        latitude=15.0,  # Existing coordinates
+                        longitude=25.0,
+                        arrival="11:30",
+                        departure="13:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000,
+        travel_mode="TRANSIT"
+    )
+
+    # Enrich with fallback_to_existing=True (default)
+    enriched = enrich_itinerary_with_accurate_coordinates(itinerary, fallback_to_existing=True)
+
+    # First visit: successfully updated
+    assert enriched.itinerary[0].visits[0].latitude == 37.5
+    assert enriched.itinerary[0].visits[0].longitude == 127.0
+
+    # Second visit: kept existing coordinates (fallback)
+    assert enriched.itinerary[0].visits[1].latitude == 15.0
+    assert enriched.itinerary[0].visits[1].longitude == 25.0
+
+
+@patch('services.validators.geocode_place_by_name_address')
+def test_enrich_itinerary_no_fallback(mock_geocode):
+    """Test enrich_itinerary with fallback_to_existing=False."""
+    # Mock geocode to fail
+    mock_geocode.return_value = {"latitude": None, "longitude": None}
+
+    itinerary = ItineraryResponse2(
+        itinerary=[
+            DayItinerary2(
+                day=1,
+                visits=[
+                    Visit2(
+                        order=1,
+                        display_name="Place",
+                        name_address="Place Address",
+                        place_tag=PlaceTag.TOURIST_SPOT,
+                        latitude=10.0,
+                        longitude=20.0,
+                        arrival="09:00",
+                        departure="11:00",
+                        travel_time=0
+                    )
+                ]
+            )
+        ],
+        budget=100000,
+        travel_mode="TRANSIT"
+    )
+
+    # Enrich with fallback_to_existing=False
+    enriched = enrich_itinerary_with_accurate_coordinates(itinerary, fallback_to_existing=False)
+
+    # Coordinates should be None (no fallback)
+    assert enriched.itinerary[0].visits[0].latitude is None
+    assert enriched.itinerary[0].visits[0].longitude is None

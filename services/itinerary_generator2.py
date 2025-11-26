@@ -16,7 +16,8 @@ from services.validators import (
     infer_travel_mode,
     fetch_actual_travel_times,
     update_travel_times_from_routes,
-    adjust_schedule_with_new_travel_times
+    adjust_schedule_with_new_travel_times,
+    enrich_itinerary_with_accurate_coordinates  # PR#3: 추가
 )
 # PR#15: Retry helper import 추가
 # PR#17: InvalidGeminiResponseError import 추가
@@ -449,6 +450,31 @@ class ItineraryGeneratorService2:
                     logger.error(f"Pydantic validation error: {str(e)}")
                     logger.error(f"Data: {json.dumps(itinerary_data, indent=2, ensure_ascii=False)}")
                     raise Exception(f"Invalid itinerary format: {str(e)}")
+
+                # PR#3: Places API로 정확한 좌표 보강
+                logger.info("🗺️ Enriching itinerary with accurate coordinates from Places API...")
+                try:
+                    itinerary_response = enrich_itinerary_with_accurate_coordinates(
+                        itinerary=itinerary_response,
+                        use_existing_as_bias=True,  # Gemini 좌표를 검색 힌트로 사용
+                        fallback_to_existing=True   # 실패 시 Gemini 좌표 유지
+                    )
+
+                    # 좌표 보강 통계 로깅
+                    total_visits = sum(len(day.visits) for day in itinerary_response.itinerary)
+                    visits_without_coords = sum(
+                        1 for day in itinerary_response.itinerary
+                        for visit in day.visits
+                        if visit.latitude is None or visit.longitude is None
+                    )
+
+                    if visits_without_coords > 0:
+                        logger.warning(f"⚠️ {visits_without_coords}/{total_visits} visits still missing coordinates after enrichment")
+                    else:
+                        logger.info(f"✅ All {total_visits} visits have accurate coordinates")
+
+                except Exception as e:
+                    logger.warning(f"⚠️ Coordinate enrichment failed: {str(e)} - proceeding with original coordinates")
 
                 # PR#10: Routes API로 실제 이동시간 수집 및 일정 조정
                 # Use travel_mode from Gemini response (fallback to inference from chat if not present)

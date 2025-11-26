@@ -580,6 +580,12 @@ async def test_itinerary_generation_v2_e2e():
             for field in required_fields:
                 assert field in visit, f"Day {day_idx}, Visit {visit_idx} missing '{field}' field"
 
+            # PR#3: 좌표가 None이 아닌지 확인 (Places API로 채워졌는지 검증)
+            assert visit["latitude"] is not None, \
+                f"Day {day_idx}, Visit {visit_idx} ({visit['display_name']}): latitude is None - coordinate enrichment failed"
+            assert visit["longitude"] is not None, \
+                f"Day {day_idx}, Visit {visit_idx} ({visit['display_name']}): longitude is None - coordinate enrichment failed"
+
             # 데이터 타입 검증
             assert isinstance(visit["order"], int), f"order must be int"
             assert isinstance(visit["display_name"], str), f"display_name must be str"
