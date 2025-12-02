@@ -576,7 +576,7 @@ async def test_itinerary_generation_v2_e2e():
         # 4. 각 visit 검증
         for visit_idx, visit in enumerate(day["visits"], start=1):
             # 필수 필드 존재 확인
-            required_fields = ["order", "display_name", "name_address", "place_tag", "latitude", "longitude", "arrival", "departure", "travel_time"]
+            required_fields = ["order", "display_name", "name_address", "place_tag", "latitude", "longitude", "arrival", "departure", "travel_time", "estimated_cost", "cost_explanation"]
             for field in required_fields:
                 assert field in visit, f"Day {day_idx}, Visit {visit_idx} missing '{field}' field"
 
@@ -596,6 +596,11 @@ async def test_itinerary_generation_v2_e2e():
             assert isinstance(visit["arrival"], str), f"arrival must be str"
             assert isinstance(visit["departure"], str), f"departure must be str"
             assert isinstance(visit["travel_time"], int), f"travel_time must be int"
+            # 비용 필드 타입 검증 (Optional이므로 None 허용)
+            assert visit["estimated_cost"] is None or isinstance(visit["estimated_cost"], int), \
+                f"estimated_cost must be int or None, got {type(visit['estimated_cost'])}"
+            assert visit["cost_explanation"] is None or isinstance(visit["cost_explanation"], str), \
+                f"cost_explanation must be str or None, got {type(visit['cost_explanation'])}"
 
             # place_tag 유효성 검증
             valid_tags = ["TOURIST_SPOT", "HOME", "RESTAURANT", "CAFE", "OTHER"]
@@ -717,6 +722,32 @@ async def test_itinerary_generation_v2_e2e():
     assert isinstance(data["budget"], int), "budget must be int"
     assert data["budget"] > 0, f"budget must be positive, got {data['budget']}"
     print(f"\n✓ Budget per person: {data['budget']:,} KRW")
+
+    # 8.5. 비용 정보 통계
+    visits_with_cost = 0
+    visits_without_cost = 0
+    total_estimated_cost = 0
+    free_visits = 0
+
+    for day in data["itinerary"]:
+        for visit in day["visits"]:
+            if visit["estimated_cost"] is not None:
+                visits_with_cost += 1
+                total_estimated_cost += visit["estimated_cost"]
+                if visit["estimated_cost"] == 0:
+                    free_visits += 1
+            else:
+                visits_without_cost += 1
+
+    print(f"\n✓ Cost information coverage:")
+    print(f"  - Visits with cost info: {visits_with_cost}/{total_visits} ({visits_with_cost/total_visits*100:.1f}%)")
+    print(f"  - Free visits (cost=0): {free_visits}")
+    print(f"  - Visits without cost (None): {visits_without_cost}")
+    print(f"  - Sum of estimated costs: {total_estimated_cost:,} KRW")
+    if visits_with_cost > 0:
+        difference = abs(data['budget'] - total_estimated_cost)
+        difference_percent = (difference / data['budget']) * 100
+        print(f"  - Budget vs sum difference: {difference:,} KRW ({difference_percent:.1f}%)")
 
     # 9. Google Maps Grounding 검증 요약
     print(f"\n" + "=" * 60)

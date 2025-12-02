@@ -373,7 +373,9 @@ Result: display_name="오사카 성",
           "longitude": null,
           "arrival": "09:00",
           "departure": "11:30",
-          "travel_time": 30
+          "travel_time": 30,
+          "estimated_cost": 15000,
+          "cost_explanation": "입장료 600엔 (약 6,000원) + 교통비 약 9,000원"
         }},
         {{
           "order": 2,
@@ -384,7 +386,9 @@ Result: display_name="오사카 성",
           "longitude": null,
           "arrival": "12:00",
           "departure": "14:00",
-          "travel_time": 0
+          "travel_time": 0,
+          "estimated_cost": 0,
+          "cost_explanation": "무료"
         }}
       ]
     }},
@@ -463,6 +467,44 @@ Result: display_name="오사카 성",
    - **마지막 visit**: 0 (다음 장소가 없으므로)
    - 예: Visit 1 departure "11:30", travel_time 30 → Visit 2 arrival "12:00"
 
+9. **estimated_cost** (정수 또는 null):
+   - 해당 장소의 1인당 예상 비용 (원화 기준)
+   - **무료 활동**: 0 (공원, 거리, 해변 등)
+   - **유료 활동**: 입장료 + 교통비 등 포함 (양수)
+   - **불명확한 비용**: null (예약 필요, 가격 변동 등)
+   - Google Maps 정보 활용하여 실제 가격 반영
+   - 예: 15000, 0, null
+
+10. **cost_explanation** (문자열 또는 null):
+   - 비용에 대한 간략한 설명
+   - 형식: "항목1 + 항목2" 또는 간단한 설명
+   - 예: "입장료 600엔 (약 6,000원) + 교통비 약 9,000원"
+   - 예: "런치 세트 약 15,000원"
+   - 예: "무료" (cost=0인 경우)
+   - 예: null (설명이 불필요한 경우)
+
+### 예산 (budget) 계산 가이드
+
+**중요**: budget 필드는 모든 visit의 estimated_cost 합계와 대략 일치해야 합니다
+
+**계산 방법**:
+1. 각 visit의 estimated_cost를 합산 (null은 제외)
+2. budget = sum(visit.estimated_cost for all visits where cost is not null)
+3. 합계와 10-20% 오차 범위 내에서 일치 권장
+
+**예시**:
+- Day 1: 오사카성 (15,000) + 점심 (12,000) + 숙소 출발/귀가 (0+0) = 27,000
+- Day 2: 유니버설 (80,000) + 저녁 (25,000) = 105,000
+- **Total budget: 132,000**
+
+**비용 추정 가이드**:
+- Google Maps에서 입장료, 메뉴 가격 확인
+- Routes API에서 교통비 추정 (travel_time 활용)
+- 숙박비는 1박 기준 평균 가격 (HOME 체류 시간 기준)
+- 식사는 메뉴 가격 또는 평균 범위
+- 무료 장소는 0으로 명시 (공원, 거리, 해변 등)
+- 숙소 출발/귀가는 보통 0 (체류하지 않으므로)
+
 ### travel_time 필드 정의 (매우 중요)
 
 **중요**: travel_time은 참고용으로 생성하며, 실제값은 일정 생성 후 Routes API로 자동 대체됩니다.
@@ -522,7 +564,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
           "longitude": null,
           "arrival": "09:00",
           "departure": "09:30",
-          "travel_time": 20
+          "travel_time": 20,
+          "estimated_cost": 0,
+          "cost_explanation": "숙소 출발"
         }},
         {{
           "order": 2,
@@ -533,7 +577,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
           "longitude": null,
           "arrival": "09:50",
           "departure": "12:20",
-          "travel_time": 30
+          "travel_time": 30,
+          "estimated_cost": 15000,
+          "cost_explanation": "입장료 600엔 (약 6,000원) + 교통비 약 9,000원"
         }},
         {{
           "order": 3,
@@ -544,7 +590,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
           "longitude": null,
           "arrival": "12:50",
           "departure": "14:00",
-          "travel_time": 15
+          "travel_time": 15,
+          "estimated_cost": 12000,
+          "cost_explanation": "라멘 세트 약 12,000원"
         }},
         {{
           "order": 4,
@@ -555,7 +603,9 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
           "longitude": null,
           "arrival": "14:15",
           "departure": "14:15",
-          "travel_time": 0
+          "travel_time": 0,
+          "estimated_cost": 0,
+          "cost_explanation": "숙소 귀가"
         }}
       ]
     }},

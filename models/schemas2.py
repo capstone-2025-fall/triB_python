@@ -101,6 +101,14 @@ class Visit2(BaseModel):
         ...,
         description="다음 장소로의 이동시간 (분), 마지막 방문지는 0"
     )
+    estimated_cost: Optional[int] = Field(
+        default=None,
+        description="예상 비용 (원화 기준, 1인당). FREE 활동은 0, 비용 불명확 시 None"
+    )
+    cost_explanation: Optional[str] = Field(
+        default=None,
+        description="비용 상세 설명 (예: '입장료 6,000원 + 교통비 9,000원')"
+    )
 
 
 class DayItinerary2(BaseModel):
