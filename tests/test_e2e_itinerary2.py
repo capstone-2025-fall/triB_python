@@ -323,6 +323,28 @@ Generated: {timestamp}
 - **Country**: {request_data['country']}
 - **Members**: {request_data['members']}
 
+### Accommodation Cost Info
+
+"""
+    if itinerary_data.get("accommodation_cost_info"):
+        report += f"""- **Accommodation Cost**: {itinerary_data["accommodation_cost_info"]}\n\n"""
+    else:
+        report += "- **Accommodation Cost**: Not provided (1-day trip or missing)\n\n"
+
+    report += """
+### Budget Breakdown
+
+"""
+    visits_total = sum(
+        visit.get("estimated_cost", 0) or 0
+        for day in itinerary_data.get("itinerary", [])
+        for visit in day.get("visits", [])
+    )
+    budget = itinerary_data.get("budget", 0)
+    report += f"""- **Total Budget**: {budget:,} KRW per person
+- **Visits Cost**: {visits_total:,} KRW
+- **Accommodation Cost (implied)**: {budget - visits_total:,} KRW
+
 ### Day-by-Day Breakdown
 
 """
@@ -749,7 +771,48 @@ async def test_itinerary_generation_v2_e2e():
         difference_percent = (difference / data['budget']) * 100
         print(f"  - Budget vs sum difference: {difference:,} KRW ({difference_percent:.1f}%)")
 
-    # 9. Google Maps Grounding 검증 요약
+    # 9. 숙소 비용 정보 검증
+    print(f"\n" + "=" * 60)
+    print(f"Accommodation Cost Info Validation")
+    print(f"=" * 60)
+
+    assert "accommodation_cost_info" in data, "Response must contain 'accommodation_cost_info' field"
+
+    expected_nights = request_data["days"] - 1
+    if expected_nights > 0:
+        if data["accommodation_cost_info"] is None:
+            print(f"⚠️ Warning: Expected {expected_nights} nights but accommodation_cost_info is null")
+        else:
+            assert isinstance(data["accommodation_cost_info"], str), \
+                "accommodation_cost_info must be a string"
+            print(f"✓ Accommodation cost info: {data['accommodation_cost_info']}")
+
+            # Budget에 숙소 비용이 포함되어야 함
+            visits_total = sum(
+                visit.get("estimated_cost", 0) or 0
+                for day in data["itinerary"]
+                for visit in day["visits"]
+            )
+            actual_budget = data["budget"]
+
+            # 숙소 비용 = budget - 방문지 비용
+            implied_accommodation_cost = actual_budget - visits_total
+
+            print(f"\n✓ Budget validation:")
+            print(f"  - Visits cost: {visits_total:,} KRW")
+            print(f"  - Total budget: {actual_budget:,} KRW")
+            print(f"  - Implied accommodation cost: {implied_accommodation_cost:,} KRW")
+
+            if implied_accommodation_cost < 0:
+                print(f"⚠️ Warning: Budget is less than visits cost (accommodation cost is negative)")
+    else:
+        # 1일 여행 - 숙박 없음
+        if data["accommodation_cost_info"] is not None:
+            print(f"⚠️ Warning: accommodation_cost_info should be null for 1-day trip, got: {data['accommodation_cost_info']}")
+        else:
+            print(f"✓ 1-day trip: accommodation_cost_info correctly set to null")
+
+    # 10. Google Maps Grounding 검증 요약
     print(f"\n" + "=" * 60)
     print(f"Google Maps Grounding Verification")
     print(f"=" * 60)

@@ -446,6 +446,16 @@ class ItineraryGeneratorService2:
                 # Pydantic 검증
                 try:
                     itinerary_response = ItineraryResponse2(**itinerary_data)
+
+                    # 숙소 비용 정보 로깅
+                    if itinerary_response.accommodation_cost_info:
+                        logger.info(f"🏨 Accommodation cost info: {itinerary_response.accommodation_cost_info}")
+                    else:
+                        expected_nights = request.days - 1
+                        if expected_nights > 0:
+                            logger.warning(
+                                f"⚠️ No accommodation cost info provided for {expected_nights}-night trip"
+                            )
                 except Exception as e:
                     logger.error(f"Pydantic validation error: {str(e)}")
                     logger.error(f"Data: {json.dumps(itinerary_data, indent=2, ensure_ascii=False)}")
@@ -518,6 +528,19 @@ class ItineraryGeneratorService2:
                     for day in itinerary_response.itinerary:
                         visit_names = [v.display_name for v in day.visits]
                         logger.info(f"  Day {day.day}: {len(day.visits)} visits - {', '.join(visit_names)}")
+
+                    # Budget 구성 요소 로깅
+                    visits_cost = sum(
+                        visit.estimated_cost or 0
+                        for day in itinerary_response.itinerary
+                        for visit in day.visits
+                    )
+                    logger.info(
+                        f"💰 Budget breakdown: Visits {visits_cost:,} KRW + "
+                        f"Accommodation (included in budget: {itinerary_response.budget:,} KRW)"
+                    )
+                    if itinerary_response.accommodation_cost_info:
+                        logger.info(f"   Accommodation details: {itinerary_response.accommodation_cost_info}")
 
                     return itinerary_response
                 else:

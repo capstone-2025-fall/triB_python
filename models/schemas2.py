@@ -133,7 +133,11 @@ class ItineraryResponse2(BaseModel):
         ...,
         description="이동 수단 (DRIVE, TRANSIT, WALK, BICYCLE)"
     )
+    accommodation_cost_info: Optional[str] = Field(
+        default=None,
+        description="숙소 비용 상세 정보 (예: '크로스 호텔 오사카 - 1박당 80,000원 x 2박 = 총 160,000원')"
+    )
     budget: int = Field(
         ...,
-        description="1인당 예상 예산 (원화 기준)"
+        description="1인당 예상 예산 (원화 기준) - 방문지 비용 + 숙소 비용 포함"
     )

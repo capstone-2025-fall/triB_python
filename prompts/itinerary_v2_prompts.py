@@ -325,6 +325,30 @@ Priority 1-3을 만족한 후 추가 고려사항:
 
 ---
 
+## 숙소 비용 (Accommodation Costs) 처리
+
+### 숙박비와 HOME 방문 비용의 구분
+
+**중요**: HOME 태그 방문지(숙소 출발/귀가)의 `estimated_cost`는 항상 0입니다.
+- 이유: HOME 방문은 이동을 나타내며, 실제 숙박은 하지 않음
+- 숙박비는 별도로 `accommodation_cost_info` 필드에 텍스트로 제공됩니다
+
+### 숙박비 계산 및 출력
+
+**필수**: 여행 일수가 N일이면 숙박은 (N-1)박입니다
+
+**숙박비 정보 수집 방법**:
+1. Google Maps에서 숙소 검색하여 1박당 평균 가격 확인
+2. 가격은 1인당으로 환산
+3. 숙소가 여러 개면 각각 별도로 표시
+
+**출력 형식** (accommodation_cost_info):
+- 단일 숙소: "숙소명 - 1박당 XX원 x N박 = 총 XX원"
+- 여러 숙소: "숙소1 - 1박당 XX원 x N박 = XX원 / 숙소2 - 1박당 XX원 x N박 = XX원 (총 XX원)"
+- 1일 여행(숙박 없음): null
+
+---
+
 ## Google Maps Grounding 활용
 
 ### 필수 정보 조회
@@ -397,6 +421,8 @@ Result: display_name="오사카 성",
       "visits": [...]
     }}
   ],
+  "travel_mode": "TRANSIT",
+  "accommodation_cost_info": "크로스 호텔 오사카 - 1박당 80,000원 x 2박 = 총 160,000원",
   "budget": 500000
 }}
 ```
@@ -405,7 +431,9 @@ Result: display_name="오사카 성",
 
 **최상위 구조**:
 - `itinerary` (배열): 모든 일정 정보를 담은 배열
-- `budget` (정수): 1인당 예상 예산 (원화 기준) - **itinerary 배열 밖에 위치**
+- `travel_mode` (문자열): 이동 수단 (DRIVE, TRANSIT, WALK, BICYCLE)
+- `accommodation_cost_info` (문자열 또는 null): 숙소 비용 상세 정보
+- `budget` (정수): 1인당 예상 예산 (원화 기준) - **방문지 비용 + 숙소 비용 포함**
 
 **day 객체 (itinerary 배열의 각 요소)**:
 - `day` (정수): 1부터 시작하는 일차 번호 (1, 2, 3, ...)
@@ -485,25 +513,27 @@ Result: display_name="오사카 성",
 
 ### 예산 (budget) 계산 가이드
 
-**중요**: budget 필드는 모든 visit의 estimated_cost 합계와 대략 일치해야 합니다
+**중요**: budget 필드는 방문지 비용 + 숙박비 합계입니다
 
 **계산 방법**:
-1. 각 visit의 estimated_cost를 합산 (null은 제외)
-2. budget = sum(visit.estimated_cost for all visits where cost is not null)
-3. 합계와 10-20% 오차 범위 내에서 일치 권장
+1. 방문지 비용 합계 = sum(visit.estimated_cost for all visits where cost is not null)
+2. 숙박비 합계 = accommodation_cost_info에 명시된 총 숙박비
+3. budget = 방문지 비용 합계 + 숙박비 합계
 
-**예시**:
-- Day 1: 오사카성 (15,000) + 점심 (12,000) + 숙소 출발/귀가 (0+0) = 27,000
-- Day 2: 유니버설 (80,000) + 저녁 (25,000) = 105,000
-- **Total budget: 132,000**
+**예시** (3일 여행, 2박):
+- Day 1 방문지: 오사카성 (15,000) + 점심 (12,000) + HOME 출발/귀가 (0+0) = 27,000
+- Day 2 방문지: 유니버설 (80,000) + 저녁 (25,000) = 105,000
+- Day 3 방문지: 해유관 (20,000) + 점심 (15,000) = 35,000
+- **방문지 비용 합계: 167,000원**
+- **숙박비: 크로스 호텔 오사카 - 1박당 80,000원 x 2박 = 160,000원**
+- **Total budget: 327,000원**
 
 **비용 추정 가이드**:
-- Google Maps에서 입장료, 메뉴 가격 확인
-- Routes API에서 교통비 추정 (travel_time 활용)
-- 숙박비는 1박 기준 평균 가격 (HOME 체류 시간 기준)
+- 숙박비는 Google Maps에서 숙소 검색하여 1박 평균 가격 확인 (1인당)
+- HOME 출발/귀가 방문은 항상 estimated_cost=0 (체류하지 않으므로)
+- 방문지 비용은 입장료 + 교통비 포함
 - 식사는 메뉴 가격 또는 평균 범위
-- 무료 장소는 0으로 명시 (공원, 거리, 해변 등)
-- 숙소 출발/귀가는 보통 0 (체류하지 않으므로)
+- 무료 장소는 0으로 명시
 
 ### travel_time 필드 정의 (매우 중요)
 
@@ -615,6 +645,7 @@ visit[i+1].arrival = visit[i].departure + visit[i].travel_time
     }}
   ],
   "travel_mode": "TRANSIT",
+  "accommodation_cost_info": "크로스 호텔 오사카 - 1박당 80,000원 x 1박 = 총 80,000원",
   "budget": 450000
 }}
 ```
